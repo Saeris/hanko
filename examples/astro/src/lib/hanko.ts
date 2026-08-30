@@ -32,6 +32,15 @@ export const hanko = new HankoServer({
   // library default.
   expiresInSeconds: 300,
   intervalSeconds: 2,
+  // Four characters, no separator — the Plex shape. Eight is the library
+  // default and what RFC 8628 works through, but its own §5.1 analysis is
+  // "short code plus rate limiting", not "long code alone": at ~17 bits this
+  // is safe because `/api/link` caps attempts, and unsafe without that.
+  //
+  // Four also fits on one line of a TV at any size, and is short enough that
+  // re-typing it to confirm is not a chore — which keeps the §5.4 check
+  // something people actually do rather than click past.
+  userCode: { length: 4, separator: `` },
   hooks: {
     // Visible in the terminal running `astro dev`, so the flow can be followed
     // across three devices without a debugger attached to any of them.

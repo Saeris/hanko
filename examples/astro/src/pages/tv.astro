@@ -3,73 +3,113 @@ import { renderDeviceQr } from "@saeris/hanko";
 import Base from "../layouts/Base.astro";
 import { hanko, originOf } from "../lib/hanko.js";
 
-// Started server-side so the screen paints with a code already on it. Doing
-// this in the browser would show an empty panel for a round trip, which on a
-// TV reads as the app having failed to load.
-//
-// The verification URI comes from THIS request's origin, so the QR always
-// points at the host the browser actually reached — localhost, a tunnel, or a
-// LAN name — with no restart and no environment variable. Astro's `site` is
-// unset here deliberately; `Astro.url` already reflects the forwarded host.
-const grant = await hanko.requestAuthorization({
-  clientId: `taproom-tv`,
-  verificationUri: `${originOf(Astro.request, Astro.url)}/link`
-});
+// The origin the browser actually reached. A grant created here is only
+// reachable through the SAME origin — the store is shared, but the QR and the
+// approval page have to agree on a host the phone can resolve.
+const origin = originOf(Astro.request, Astro.url);
+const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/u.test(origin);
 
-const qr = renderDeviceQr(grant.verification_uri_complete!, {
-  size: 340,
-  // Light modules on the dark panel. Scanners need contrast, not a specific
-  // polarity — but the quiet zone has to match the modules, hence the dark
-  // background rather than a transparent one.
-  color: `#f0b429`,
-  background: `#160c1e`
-});
+// Refuse rather than render an unusable screen. Opening this page on
+// `localhost` while the phone is on a tunnel produces a QR the phone cannot
+// reach AND a code stored against an origin its requests never carry — both
+// fail silently, which is the worst way for a sign-in screen to fail.
+const grant = isLocal
+  ? null
+  : // Started server-side so the screen paints with a code already on it.
+    // Doing this in the browser would show an empty panel for a round trip,
+    // which on a TV reads as the app having failed to load.
+    await hanko.requestAuthorization({
+      clientId: `taproom-tv`,
+      verificationUri: `${origin}/link`
+    });
+
+const qr =
+  grant === null
+    ? null
+    : renderDeviceQr(grant.verification_uri_complete!, {
+        size: 340,
+        // Light modules on the dark panel. Scanners need contrast, not a
+        // specific polarity — but the quiet zone has to match the modules,
+        // hence the dark background rather than a transparent one.
+        color: `#f0b429`,
+        background: `#160c1e`
+      });
 
 // Shown without the scheme: the user is retyping this from across a room, and
 // "https://" is eight characters of noise they do not need.
-const typedUrl = grant.verification_uri.replace(/^https?:\/\//u, ``);
+const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
 ---
 
 <Base title="Sign in — hanko" surface="tv">
   <main>
-    <h1>Sign in to the taproom board</h1>
+    {
+      grant === null ? (
+        <section class="blocked">
+          <h1>Open this on a URL your phone can reach</h1>
+          <p class="lead">
+            This page is being served from <code>{origin}</code>, which only
+            this machine can resolve. A code created here would be unreachable
+            from a phone, so none is shown.
+          </p>
+          <p class="lead">
+            Run <code>yarn demo:share</code> and open the tunnel URL it prints
+            — the terminal also shows it as a QR you can scan.
+          </p>
+        </section>
+      ) : (
+        <>
+          <h1>Sign in to the taproom board</h1>
 
-    <div class="paths">
-      <section class="path">
-        <p class="lead">Visit this link in a browser</p>
-        <p class="url">{typedUrl}</p>
-        <p class="lead">and enter this code</p>
-        <p class="code" aria-label={`Code: ${grant.user_code.split("").join(" ")}`}>
-          {grant.user_code}
-        </p>
-      </section>
+          <div class="paths">
+            <section class="path">
+              <p class="lead">Visit this link in a browser</p>
+              <p class="url">{typedUrl}</p>
+              <p class="lead">and enter this code</p>
+              <p
+                class="code"
+                aria-label={`Code: ${grant.user_code.split("").join(" ")}`}
+              >
+                {grant.user_code}
+              </p>
+            </section>
 
-      <div class="divider" aria-hidden="true"><span>OR</span></div>
+            <div class="divider" aria-hidden="true">
+              <span>OR</span>
+            </div>
 
-      <section class="path">
-        <p class="lead">Use the camera on your phone<br />to scan the QR code</p>
-        <div class="qr" set:html={qr} />
-      </section>
-    </div>
+            <section class="path">
+              <p class="lead">
+                Use the camera on your phone<br />to scan the QR code
+              </p>
+              <div class="qr" set:html={qr} />
+            </section>
+          </div>
 
-    <p class="status" id="status" role="status" aria-live="polite">
-      Waiting for approval…
-    </p>
+          <p class="status" id="status" role="status" aria-live="polite">
+            Waiting for approval…
+          </p>
+        </>
+      )
+    }
   </main>
 </Base>
 
 <script
   is:inline
   define:vars={{
-    deviceCode: grant.device_code,
-    interval: grant.interval,
-    expiresIn: grant.expires_in
+    // Null when the origin is local and no grant was created. The loop below
+    // bails on that rather than polling for a code that does not exist.
+    deviceCode: grant?.device_code ?? null,
+    interval: grant?.interval ?? 5,
+    expiresIn: grant?.expires_in ?? 0
   }}
 >
   // Inline and dependency-free on purpose: this is the code that runs on a Fire
   // Stick or a Pi, where every fetch costs and the JS engine is modest. The
   // library's own client would work here too — this keeps the demo's TV bundle
   // at zero bytes of framework.
+  // No grant means the blocked screen is showing; there is nothing to poll.
+  if (deviceCode !== null) {
   const status = document.getElementById(`status`);
   const deadline = Date.now() + expiresIn * 1000;
   let wait = interval;
@@ -131,6 +171,7 @@ const typedUrl = grant.verification_uri.replace(/^https?:\/\//u, ``);
   };
 
   setTimeout(poll, wait * 1000);
+  }
 </script>
 
 <style>
@@ -248,6 +289,24 @@ const typedUrl = grant.verification_uri.replace(/^https?:\/\//u, ``);
     display: block;
     width: clamp(180px, 18vw, 340px);
     height: auto;
+  }
+
+  .blocked {
+    grid-row: 1 / -1;
+    align-self: center;
+    display: grid;
+    gap: 1.25rem;
+    max-width: 44rem;
+    text-align: center;
+  }
+
+  .blocked h1 {
+    font-size: clamp(1.4rem, 2.6vw, 2.5rem);
+  }
+
+  .blocked code {
+    color: var(--accent);
+    word-break: break-all;
   }
 
   .status {

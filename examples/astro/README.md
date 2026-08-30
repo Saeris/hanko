@@ -42,14 +42,18 @@ Then one command:
 
 ```sh
 yarn demo:share
-#      ngrok -> https://9a8c-71-63-254-225.ngrok-free.app
 ```
 
-Open that URL on the phone. Nothing else to configure — the QR is built from
-whichever host each request arrives on (`x-forwarded-host`), so the same
-running server serves a correct code to a phone on the tunnel and to a browser
-on `localhost` at the same time. Free ngrok assigns a new URL on every restart;
-that no longer matters.
+It prints a QR of the tunnel URL, the way `expo start` does — scan it and the
+phone opens the demo. The URL is discovered from ngrok's local API, so nothing
+has to be copied or configured. Free ngrok assigns a new URL on every restart;
+that no longer matters either.
+
+**Open `/tv` on the same tunnel URL, not on `localhost`.** Both devices have to
+come through the same origin: a grant created on `localhost` produces a QR the
+phone cannot reach, and a code the phone's requests will never find. Opening
+`/tv` on a local URL now says so instead of rendering a code that cannot
+work.
 
 Two things worth knowing: the tunnel is public while it runs, and free ngrok
 interstitials a browser warning page on first visit. Tap through it once on the
@@ -159,9 +163,10 @@ modest hardware.
 - **`MemoryDeviceGrantStore`** dies with the process and is not shared between
   instances. Correct for one Node process, wrong for the edge deployment this
   library targets — swap in `KvDeviceGrantStore`.
-- **No rate limiting.** RFC 8628 §5.1 requires it; the `rateLimit` seam on
-  `createApprovalHandler` is where it goes. Left out because a demo has no
-  shared store to hold counters.
+- **In-memory rate limiting.** Five attempts per minute per (IP, code), which
+  is what makes the 4-character code safe — at ~17 bits it is trivially
+  brute-forceable without a cap. Per-instance, so an attacker on a real
+  deployment would spread attempts across instances; use a shared store there.
 - **`checkOrigin: false`.** Astro rejects form-encoded POSTs whose `Origin`
   does not match, which is right for browser forms and wrong for the device
   endpoints — a Fire Stick sends no `Origin`, and the RFC requires form

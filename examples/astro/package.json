@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "astro dev",
-    "share": "portless run --name hanko --ngrok astro dev",
+    "share": "node scripts/share.mjs",
     "build": "astro build",
     "preview": "astro preview"
   },

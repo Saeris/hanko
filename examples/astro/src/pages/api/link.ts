@@ -1,11 +1,21 @@
 import type { APIRoute } from "astro";
 import { createApprovalHandler } from "@saeris/hanko/handlers";
 import { authenticate, hanko } from "../../lib/hanko.js";
+import { createRateLimiter } from "../../lib/rate-limit.js";
 
-// No rate limiter here because a demo has no shared store to hold counters —
-// but RFC 8628 §5.1 REQUIRES one in production. The seam is `rateLimit`; see
-// the README. Leaving it out is a demo shortcut, not a pattern to copy.
-const handler = createApprovalHandler({ server: hanko, authenticate });
+// Not optional here. The demo uses a 4-character code (~17 bits, like Plex),
+// which is only safe because guessing is capped — RFC 8628 §5.1 moves the
+// entropy budget from the code to this limiter when the code is short.
+//
+// In-memory, so it is per-instance. Use a shared store on any real deployment,
+// or an attacker simply spreads attempts across instances.
+const rateLimit = createRateLimiter({ max: 5, windowMs: 60_000 });
+
+const handler = createApprovalHandler({
+  server: hanko,
+  authenticate,
+  rateLimit
+});
 
 export const GET: APIRoute = async ({ request }) => handler(request);
 export const POST: APIRoute = async ({ request }) => handler(request);

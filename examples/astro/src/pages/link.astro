@@ -40,8 +40,11 @@ const subject = authenticate(Astro.request);
                 id="code"
                 name="user_code"
                 value={prefilled}
-                placeholder="WDJB-MJHT"
-                autocomplete="off"
+                placeholder="WDJB"
+                maxlength="8"
+                enterkeyhint="go"
+                autocomplete="one-time-code"
+                autocorrect="off"
                 autocapitalize="characters"
                 spellcheck="false"
                 required
@@ -65,7 +68,10 @@ const subject = authenticate(Astro.request);
               <span>Re-enter the code</span>
               <input
                 id="challenge"
-                autocomplete="off"
+                maxlength="8"
+                enterkeyhint="done"
+                autocomplete="one-time-code"
+                autocorrect="off"
                 autocapitalize="characters"
                 spellcheck="false"
               />
