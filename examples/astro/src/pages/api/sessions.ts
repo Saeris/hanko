@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { authenticate } from "../../lib/hanko.js";
+import { authenticate, sessionToken } from "../../lib/hanko.js";
 import { listSessions, revokeAll, revokeSession } from "../../lib/sessions.js";
 
 /** The signed-in devices for this account. */
@@ -10,7 +10,7 @@ export const GET: APIRoute = ({ request }) => {
   }
 
   return Response.json(
-    { sessions: listSessions(subject) },
+    { sessions: listSessions(subject, sessionToken(request)) },
     { headers: { "cache-control": `no-store` } }
   );
 };

@@ -34,7 +34,6 @@ const subject = authenticate(Astro.request);
             <p class="lead">Point your camera at the code on the other device.</p>
             <div class="viewfinder">
               <video id="video" playsinline muted></video>
-              <div class="reticle" aria-hidden="true"></div>
             </div>
             <p class="scan-status" id="scan-status" role="status" aria-live="polite">
               Starting camera…
@@ -66,36 +65,25 @@ const subject = authenticate(Astro.request);
           </form>
 
           <div id="confirm" class="step hidden">
+            <p class="lead">
+              <strong id="client-name">A device</strong> is asking to sign in as
+              you.
+            </p>
+
             <div class="callout">
-              <span class="callout-label">Signing in</span>
-              <strong class="callout-client" id="client-name">a device</strong>
+              <span class="callout-label">Check this matches that screen</span>
+              <strong class="callout-code" id="server-code" />
             </div>
 
-            <div id="recheck" class="recheck">
-              <p class="lead">
-                Type the code shown on that device. This is what proves you can
-                see it, and it is what stops someone else&rsquo;s device being
-                signed in as you.
-              </p>
-
-              <label class="field">
-                <span>Code on that screen</span>
-                <input
-                  id="challenge"
-                  maxlength="8"
-                  enterkeyhint="done"
-                  autocomplete="one-time-code"
-                  autocorrect="off"
-                  autocapitalize="characters"
-                  spellcheck="false"
-                />
-              </label>
-            </div>
+            <p class="lead">
+              If that code is not the one on the device in front of you,
+              someone else is trying to sign in. Deny it.
+            </p>
 
             <p class="error hidden" id="error" role="alert" />
 
             <div class="actions">
-              <button class="btn primary" id="approve" type="button" disabled>
+              <button class="btn primary" id="approve" type="button">
                 Approve
               </button>
               <button class="btn ghost" id="deny" type="button">Deny</button>
@@ -116,7 +104,6 @@ const subject = authenticate(Astro.request);
 <script>
   import {
     ApprovalClient,
-    codeEntryChallenge,
     noChallenge,
     consumeLaunchTarget,
     parseApprovalLink
@@ -127,7 +114,6 @@ const subject = authenticate(Astro.request);
     const $ = (id: string) => document.getElementById(id)!;
     const lookup = $(`lookup`) as HTMLFormElement;
     const codeInput = $(`code`) as HTMLInputElement;
-    const challengeInput = $(`challenge`) as HTMLInputElement;
     const approveBtn = $(`approve`) as HTMLButtonElement;
     const error = $(`error`);
     const outcome = $(`outcome`);
@@ -137,10 +123,6 @@ const subject = authenticate(Astro.request);
 
     const show = (el: HTMLElement, on: boolean) =>
       el.classList.toggle(`hidden`, !on);
-
-    /** Insert the separator every four characters, to match the TV's display. */
-    const groupCode = (code: string) =>
-      (code.match(/.{1,4}/gu) ?? [code]).join(`-`);
 
     // Typed loosely because the module is imported dynamically below — the
     // library manages the camera, so there is no MediaStream to hold here.
@@ -160,23 +142,10 @@ const subject = authenticate(Astro.request);
 
     const showCodeEntry = (): void => {
       stopCamera();
-      arrivedByScan = false;
       show(scanner, false);
       show(lookup, true);
       codeInput.focus();
     };
-
-    /**
-     * Whether the code reached us without the user reading it.
-     *
-     * True for a scan or a `verification_uri_complete` in the URL, false once
-     * they switch to typing. Decides whether §5.4's confirmation is warranted
-     * — see the `challenge` option below.
-     */
-    let arrivedByScan = codeInput.value.length > 0;
-
-    const codeEntry = codeEntryChallenge();
-    const none = noChallenge();
 
     const client = new ApprovalClient({
       // The library never assumes a transport — the host wires its own fetches.
@@ -185,11 +154,11 @@ const subject = authenticate(Astro.request);
           `/api/link?user_code=${encodeURIComponent(userCode)}`
         );
         if (!res.ok) return null;
-        const body = (await res.json()) as { client_id?: string };
-        // The code carried forward is the one WE supplied, not one the server
-        // echoed back — the server deliberately does not return it. That is
-        // what keeps a phished code off this screen.
-        return { userCode, clientId: body.client_id };
+        const body = (await res.json()) as {
+          user_code: string;
+          client_id?: string;
+        };
+        return { userCode: body.user_code, clientId: body.client_id };
       },
       submit: async (userCode, approved) => {
         await fetch(`/api/link`, {
@@ -201,30 +170,19 @@ const subject = authenticate(Astro.request);
           })
         });
       },
-      // Conditional on HOW the code arrived, which is what RFC 8628 §5.4
-      // actually asks for:
+      // No challenge, because RFC 8628 §3.3.1 does not ask for one:
       //
-      //   "it is particularly important to confirm that the device is in the
-      //    user's possession, AS THE USER NO LONGER HAS TO TYPE IN THE CODE
-      //    being displayed on the device manually."
+      //   "The server SHOULD display the user_code to the user and ask them to
+      //    verify that it matches the user_code being displayed on the device"
       //
-      // The check exists to REPLACE manual typing, not to duplicate it. If the
-      // code was scanned or arrived in a URL, nothing has proven the user can
-      // see the screen — so ask. If they typed it, they already proved exactly
-      // that, and asking again is friction that buys nothing. Plex works this
-      // way for the same reason.
-      // Decided at verify time rather than at construction, because the user
-      // can switch from scanning to typing after the client exists — and a
-      // challenge captured up front would not follow them.
-      challenge: {
-        kind: `conditional`,
-        present: (userCode) =>
-          arrivedByScan ? codeEntry.present(userCode) : null,
-        verify: async (answer, userCode) =>
-          arrivedByScan
-            ? await codeEntry.verify(String(answer ?? ``), userCode)
-            : await none.verify(undefined, userCode)
-      },
+      // The mitigation is the user COMPARING two physically separate screens,
+      // then choosing approve or deny. Making them re-type a code they can see
+      // is a memory test, not a possession check, and it is friction no
+      // production implementation of this flow imposes.
+      //
+      // hanko still ships `codeEntryChallenge` and `tripletChallenge` for
+      // hosts that want a higher bar on a riskier action — see the README.
+      challenge: noChallenge(),
       hooks: {
         onTransition: (_from, to) => {
           // Past `resolving` the camera has done its job; releasing it here
@@ -237,26 +195,14 @@ const subject = authenticate(Astro.request);
           show($(`confirm`), to === `confirming`);
 
           if (to === `confirming` && client.grant) {
-            // WHICH device is asking, never WHAT its code is. Rendering the
-            // code here would let someone who arrived with a phished link read
-            // it off this screen and pass the confirmation without ever
-            // looking at the device — defeating the only check that proves
-            // they can see it.
-            $(`client-name`).textContent = client.grant.clientId ?? `a device`;
+            // Both halves of what §3.3.1 asks the server to show: which device
+            // is asking, and the code to compare against that device's screen.
+            $(`client-name`).textContent = client.grant.clientId ?? `A device`;
+            $(`server-code`).textContent = client.grant.userCode;
 
-            // The re-entry field only makes sense when the code arrived
-            // without being read. Someone who typed it has already proven they
-            // can see the screen, so they go straight to approve or deny.
-            show($(`recheck`), arrivedByScan);
-            if (arrivedByScan) {
-              challengeInput.focus();
-            } else {
-              // No challenge to pass, so unlock the button immediately.
-              void (async () => {
-                await client.confirm();
-                approveBtn.disabled = false;
-              })();
-            }
+            // `noChallenge` passes immediately; running it here keeps the
+            // machine's contract intact rather than special-casing the button.
+            void client.confirm();
           }
 
           if (to === `invalid`) {
@@ -306,15 +252,6 @@ const subject = authenticate(Astro.request);
     lookup.addEventListener(`submit`, (event) => {
       event.preventDefault();
       void client.submitCode(codeInput.value);
-    });
-
-    // Verify as the user types so the button enables the moment it matches —
-    // less frustrating than typing eight characters and being told no.
-    challengeInput.addEventListener(`input`, () => {
-      show(error, false);
-      void (async () => {
-        approveBtn.disabled = !(await client.confirm(challengeInput.value));
-      })();
     });
 
     approveBtn.addEventListener(`click`, () => void client.approve());
@@ -443,7 +380,9 @@ const subject = authenticate(Astro.request);
     position: relative;
     aspect-ratio: 1;
     border-radius: 12px;
-    overflow: hidden;
+    /* No `overflow: hidden`: the library inserts its highlight overlay into
+       this container, and clipping it hides the outline it draws around a
+       detected code. */
     background: var(--ground);
     border: 1px solid var(--line);
   }
@@ -451,27 +390,11 @@ const subject = authenticate(Astro.request);
   .viewfinder video {
     width: 100%;
     height: 100%;
-    /* Cover rather than contain: a letterboxed preview wastes the area the
-       user is trying to aim, and the QR only needs to be somewhere in frame. */
-    object-fit: cover;
-  }
-
-  /* Aiming guide. Corners only — a full frame implies the code must fill it
-     exactly, which it does not. */
-  .reticle {
-    position: absolute;
-    inset: 18%;
-    border-radius: 8px;
-    background:
-      linear-gradient(var(--accent), var(--accent)) top left / 1.25rem 2px,
-      linear-gradient(var(--accent), var(--accent)) top left / 2px 1.25rem,
-      linear-gradient(var(--accent), var(--accent)) top right / 1.25rem 2px,
-      linear-gradient(var(--accent), var(--accent)) top right / 2px 1.25rem,
-      linear-gradient(var(--accent), var(--accent)) bottom left / 1.25rem 2px,
-      linear-gradient(var(--accent), var(--accent)) bottom left / 2px 1.25rem,
-      linear-gradient(var(--accent), var(--accent)) bottom right / 1.25rem 2px,
-      linear-gradient(var(--accent), var(--accent)) bottom right / 2px 1.25rem;
-    background-repeat: no-repeat;
+    /* `contain`, not `cover`. The library computes its scan region from the
+       video's rendered box and draws its own highlight overlay into this
+       container; `cover` crops the frame so the region it samples no longer
+       matches what the user sees. Letterboxing is the honest trade. */
+    object-fit: contain;
   }
 
   .scan-status {
@@ -481,10 +404,6 @@ const subject = authenticate(Astro.request);
     text-align: center;
   }
 
-  .recheck {
-    display: grid;
-    gap: 1rem;
-  }
 
   .callout {
     display: grid;

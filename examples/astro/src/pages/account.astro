@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { authenticate } from "../lib/hanko.js";
+import { authenticate, sessionToken } from "../lib/hanko.js";
 import { listSessions } from "../lib/sessions.js";
 
 // A protected route: everything here is scoped to one account, so an
@@ -12,7 +12,7 @@ if (subject === null) {
 
 // Rendered server-side so the list is populated on first paint. The stream
 // below keeps it current from there.
-const sessions = listSessions(subject);
+const sessions = listSessions(subject, sessionToken(Astro.request));
 ---
 
 <Base title="Your devices — hanko" surface="phone">
@@ -23,7 +23,7 @@ const sessions = listSessions(subject);
           <h1>Your devices</h1>
           <p class="lead">Signed in as <strong>{subject}</strong></p>
         </div>
-        <form method="POST" action="/signout">
+        <form method="POST" action="/signout" id="signout">
           <button class="btn ghost small" type="submit">Sign out</button>
         </form>
       </header>
@@ -64,6 +64,7 @@ const sessions = listSessions(subject);
 
   const list = document.getElementById(`devices`)!;
   const revokeAllBtn = document.getElementById(`revoke-all`)!;
+  const signOutForm = document.getElementById(`signout`) as HTMLFormElement;
 
   /** "3 minutes ago", without pulling in a date library for four cases. */
   const ago = (ms: number): string => {
@@ -106,7 +107,9 @@ const sessions = listSessions(subject);
 
       const info = document.createElement(`div`);
       const name = document.createElement(`strong`);
-      name.textContent = session.device;
+      name.textContent = session.current
+        ? `${session.device} — this device`
+        : session.device;
       const meta = document.createElement(`small`);
       meta.textContent = `${session.clientId} · signed in ${ago(session.createdAt)} · seen ${ago(session.lastSeenAt)}`;
       info.append(name, meta);
@@ -114,8 +117,20 @@ const sessions = listSessions(subject);
       const button = document.createElement(`button`);
       button.className = `btn ghost small`;
       button.type = `button`;
-      button.textContent = `Revoke`;
-      button.addEventListener(`click`, () => void revoke({ id: session.id }));
+      // Revoking the session you are reading this on is a sign-out, and saying
+      // so beforehand is the difference between a deliberate action and a
+      // surprise redirect to the sign-in page.
+      button.textContent = session.current ? `Sign out` : `Revoke`;
+      button.addEventListener(`click`, () => {
+        if (session.current) {
+          // Through /signout so the cookie is cleared too — revoking the store
+          // entry alone would leave this browser holding a dead token and
+          // looping through "unauthorized" on every request.
+          signOutForm.submit();
+          return;
+        }
+        void revoke({ id: session.id });
+      });
 
       row.append(info, button);
       list.append(row);

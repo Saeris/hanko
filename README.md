@@ -83,16 +83,20 @@ not `H`: higher correction needs more modules to encode the same URL, so at a
 fixed size each module gets smaller — and on a clean screen, module size matters
 more than damage tolerance.
 
-**Show the code on the device, never on the approval page.**
-[RFC 8628 §5.4][rfc-security] asks the user to confirm the code matches the
-device in front of them — which only means anything if the two screens are
-independent. An approval page that displays the code lets someone who arrived
-with a phished link read it there and "confirm" without ever looking at the
-device, which is the one thing that check exists to prove.
+**Show the code on both screens, and let the user compare.**
+[RFC 8628 §3.3.1][rfc] is explicit about the mitigation:
 
-`createApprovalHandler` therefore never returns `user_code`. The approving
-client compares against what the USER supplied; the server does the comparing
-and answers yes or no.
+> The server SHOULD display the `user_code` to the user and ask them to verify
+> that it matches the `user_code` being displayed on the device to confirm they
+> are authorizing the correct device.
+
+So `createApprovalHandler` returns the code, and the approval screen shows it
+next to which client is asking. The check is a **visual comparison against a
+physically separate screen** — not a memory test. Making someone re-type a code
+they can see proves nothing extra and is friction no production implementation
+of this flow imposes.
+
+`device_code` is never returned. That one is the bearer credential.
 
 ## Device
 

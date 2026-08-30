@@ -1,5 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
+import { SESSION_COOKIE } from "../lib/hanko.js";
+import { createDeviceSession } from "../lib/sessions.js";
 
 // Where to go once signed in. Carried through so a phone that scanned a QR
 // lands back on the approval screen with its code intact.
@@ -12,15 +14,22 @@ if (Astro.request.method === `POST`) {
 
   if (did.length > 0) {
     // Handles are mutable aliases; the DID is the identity that outlives them.
-    // The handle is stored only for display — the DID is what the device
+    // The handle is stored only for display — the DID is what a device
     // actually inherits.
-    Astro.cookies.set(`demo_session`, handle.length > 0 ? handle : did, {
-      path: `/`,
-      httpOnly: true,
-      sameSite: `lax`,
-      secure: Astro.url.protocol === `https:`
+    const subject = handle.length > 0 ? handle : did;
+
+    // This browser gets a real session too, not just a cookie. Otherwise the
+    // device list cannot show the phone you are reading it on, and "sign out"
+    // on that row would have nothing to revoke — which is exactly the gap that
+    // made revoking your own browser do nothing.
+    const session = createDeviceSession({
+      subject,
+      handle: subject,
+      clientId: `browser`,
+      userAgent: Astro.request.headers.get(`user-agent`)
     });
-    Astro.cookies.set(`demo_did`, did, {
+
+    Astro.cookies.set(SESSION_COOKIE, session.token, {
       path: `/`,
       httpOnly: true,
       sameSite: `lax`,

@@ -13,6 +13,7 @@ import { HankoServer } from "@saeris/hanko";
 import type { DeviceAuthorizationResponse } from "@saeris/hanko";
 import type { AstroCookies } from "astro";
 import { MemoryDeviceGrantStore } from "@saeris/hanko/stores/memory";
+import { touchSession } from "./sessions.js";
 
 /** Cookie holding this browser's in-flight grant. */
 const GRANT_COOKIE = `hanko_demo_grant`;
@@ -55,21 +56,36 @@ export const hanko = new HankoServer({
   }
 });
 
+/** Cookie holding this browser's session token. */
+export const SESSION_COOKIE = `hanko_demo_session`;
+
 /**
- * Stand-in for the host app's session.
+ * Who is making this request.
  *
- * In a real app this reads YOUR session cookie and returns a user id or DID.
- * Whatever it returns becomes the identity the TV is signed in as, so it is
- * the trust boundary of the entire flow — never read it from the request body,
- * which the client controls.
+ * Whatever this returns becomes the identity a device is signed in as, so it
+ * is the trust boundary of the entire flow — never read it from the request
+ * body, which the client controls.
  *
- * The demo fakes it with a cookie set by the sign-in page, which is enough to
- * exercise the 401 path honestly.
+ * Resolved through the session STORE rather than trusting the cookie's
+ * contents. That is what makes revocation real: sign a browser out from the
+ * device list and its very next request stops resolving, because the token it
+ * presents is no longer there.
  */
 export const authenticate = (request: Request): string | null => {
   const cookie = request.headers.get(`cookie`) ?? ``;
-  const match = /demo_session=([^;]+)/u.exec(cookie);
-  return match?.[1] === undefined ? null : decodeURIComponent(match[1]);
+  const match = new RegExp(`${SESSION_COOKIE}=([^;]+)`, `u`).exec(cookie);
+  const token = match?.[1];
+  if (token === undefined) return null;
+
+  const session = touchSession(decodeURIComponent(token));
+  return session?.subject ?? null;
+};
+
+/** This request's session token, for marking which row is "this device". */
+export const sessionToken = (request: Request): string | undefined => {
+  const cookie = request.headers.get(`cookie`) ?? ``;
+  const match = new RegExp(`${SESSION_COOKIE}=([^;]+)`, `u`).exec(cookie);
+  return match?.[1] === undefined ? undefined : decodeURIComponent(match[1]);
 };
 
 /**

@@ -215,3 +215,17 @@ export const subscribe = (
 const notify = (subject: string): void => {
   for (const listener of listeners.get(subject) ?? []) listener();
 };
+
+/**
+ * Revoke by raw token rather than public id.
+ *
+ * Used by sign-out, where the caller holds the token itself. Notifies so an
+ * open device list drops the row without a refresh.
+ */
+export const revokeToken = (token: string): boolean => {
+  const session = sessions.get(token);
+  if (session === undefined) return false;
+  sessions.delete(token);
+  notify(session.subject);
+  return true;
+};

@@ -236,18 +236,22 @@ export const createApprovalHandler =
         return json({ error: `invalid_code` }, 404);
       }
 
-      // Deliberately does NOT return the user code.
+      // Returns the code, because RFC 8628 §3.3.1 asks for exactly that:
       //
-      // The approving device must never learn a code it did not already have.
-      // Echoing it back lets someone who arrived with a phished code read it
-      // off this response and satisfy the §5.4 confirmation without ever
-      // looking at the device being authorized — which is the one thing that
-      // check exists to prove. The client compares against what the USER
-      // typed; the server does the comparing, and answers yes or no.
+      //   "The server SHOULD display the user_code to the user and ask them to
+      //    verify that it matches the user_code being displayed on the device
+      //    to confirm they are authorizing the correct device."
       //
-      // `device_code` is likewise never returned: it is the bearer credential
-      // and must not leave the server at all.
+      // The mitigation is a VISUAL comparison against a physically separate
+      // screen, not a memory test. Withholding it would leave the user
+      // approving an unlabelled request, which is strictly worse: they would
+      // have nothing to compare at all.
+      //
+      // `device_code` is never returned. That one IS a bearer credential —
+      // echoing it would let anyone who can resolve a user code redeem the
+      // grant themselves.
       return json({
+        user_code: grant.user_code,
         client_id: grant.clientId,
         scope: grant.scope
       });

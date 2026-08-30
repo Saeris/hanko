@@ -101,17 +101,16 @@ describe(`edge handlers`, () => {
     await expect(response.json()).resolves.toEqual({ error: `expired_token` });
   });
 
-  it(`never returns either code to the approving device`, async () => {
-    // WHY: two different secrets, both of which must stay server-side.
+  it(`returns what the approval screen must show, and nothing more`, async () => {
+    // WHY: RFC 8628 §3.3.1 asks the server to display the user code so the
+    // person can check it matches the device — "The server SHOULD display the
+    // user_code to the user and ask them to verify that it matches the
+    // user_code being displayed on the device". Withholding it would leave
+    // them approving an unlabelled request with nothing to compare.
     //
-    // `device_code` is the bearer credential — echoing it would let anyone who
-    // could resolve a user code redeem the grant themselves.
-    //
-    // `user_code` is subtler and was a real hole. Echoing it back lets someone
-    // who arrived with a PHISHED code read it off this response and satisfy
-    // RFC 8628 §5.4's confirmation without ever looking at the device being
-    // authorized — which is the one thing that check exists to prove. The
-    // approving device must only ever know a code it already had.
+    // `device_code` is different: it IS the bearer credential. Returning it
+    // would let anyone able to resolve a user code redeem the grant instead of
+    // the device that started the flow.
     const { handlers } = setup();
     const authorized = await handlers.authorize(
       post(`https://api.test/device/authorize`, { client_id: `demo-tv` })
@@ -125,11 +124,9 @@ describe(`edge handlers`, () => {
     );
     const body = (await lookup.json()) as Record<string, unknown>;
 
-    expect(body).not.toHaveProperty(`user_code`);
-    expect(body).not.toHaveProperty(`device_code`);
-    // What it MAY return: enough to say which device is asking, so the user
-    // can recognise it, and nothing that helps them fake having seen it.
+    expect(body.user_code).toBe(grant.user_code.replace(`-`, ``));
     expect(body.client_id).toBe(`demo-tv`);
+    expect(body).not.toHaveProperty(`device_code`);
   });
 
   it(`refuses approval from an unauthenticated caller`, async () => {

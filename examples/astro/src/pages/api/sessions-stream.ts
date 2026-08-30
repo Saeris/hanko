@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { authenticate } from "../../lib/hanko.js";
+import { authenticate, sessionToken } from "../../lib/hanko.js";
 import { listSessions, subscribe } from "../../lib/sessions.js";
 
 /**
@@ -24,7 +24,7 @@ export const GET: APIRoute = ({ request }) => {
         try {
           controller.enqueue(
             encoder.encode(
-              `data: ${JSON.stringify({ sessions: listSessions(subject) })}\n\n`
+              `data: ${JSON.stringify({ sessions: listSessions(subject, sessionToken(request)) })}\n\n`
             )
           );
         } catch {

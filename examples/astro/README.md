@@ -142,33 +142,36 @@ and may need the URL opened from a QR rather than typed.
    same tunnel URL**, not `localhost`. It shows a code and a QR and polls.
 3. **Phone:** the approval screen opens a camera first. Point it at the QR, or
    tap "enter the code instead".
-4. **Phone:** approve. If you scanned, you are asked to type the code first —
-   if you typed it, you are not. See below.
-5. **Phone:** you land on `/account`, where the new device appears as a row.
-   Revoke it and its next request stops resolving.
+4. **Phone:** check the code shown matches the one on that device, then
+   approve or deny.
+5. **Second screen:** its next poll picks up the decision and the whole panel
+   becomes an outcome — the code and QR are stale by then.
+6. **Phone:** you land on `/account`, where the new device appears as a row
+   alongside the phone itself. Revoke either and its next request stops
+   resolving.
 
 Reloading `/tv` keeps the same code — the grant is bound to that browser, so a
 refresh does not invalidate a code someone is halfway through typing.
 
-## Why the confirmation step is conditional
+## Why there is no "type the code again" step
 
-RFC 8628 §5.4 asks the approval screen to confirm the user can see the device
-they are authorizing. The reason it gives is specific:
+RFC 8628 §3.3.1 says what the approval screen is for:
 
-> it is particularly important to confirm that the device is in the user's
-> possession, **as the user no longer has to type in the code being displayed
-> on the device manually**
+> The server SHOULD display the `user_code` to the user and ask them to verify
+> that it matches the `user_code` being displayed on the device to confirm they
+> are authorizing the correct device.
 
-The check exists to **replace** manual typing, not to duplicate it. So:
+The mitigation is a **visual comparison between two physically separate
+screens**, followed by approve or deny. It is not a memory test. An earlier
+version of this demo made you re-type the code you had just typed, which proved
+nothing and is friction Plex, Steam and Discord all avoid.
 
-| How the code arrived | Confirmation  | Why                                            |
-| -------------------- | ------------- | ---------------------------------------------- |
-| Scanned, or a link   | type the code | nothing has proven the user can see the screen |
-| Typed by hand        | none          | typing it already proved exactly that          |
+So the approval screen shows two things — which client is asking, and the code
+to check against that device — and then two buttons.
 
-Asking someone to re-type a code they just typed is friction that buys nothing,
-and it is why Plex does not do it either. `hanko` ships both strategies; which
-one applies is the host app's decision, made per flow rather than per install.
+`hanko` still ships `codeEntryChallenge` and `tripletChallenge` for hosts that
+want a higher bar on a riskier action. The demo does not use them, because the
+RFC does not ask for them here.
 
 ## The device list
 
