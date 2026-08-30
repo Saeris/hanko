@@ -15,13 +15,34 @@ import { MemoryDeviceGrantStore } from "@saeris/hanko/stores/memory";
 /**
  * Origin the QR points at.
  *
- * Read from the environment because it changes per transport: `localhost` in a
- * plain dev run, `https://hanko.local` behind Portless. It has to be an
- * absolute URL a DIFFERENT device can resolve — a QR encoding `localhost` is
- * useless to the phone scanning it, which is the single easiest way to make
- * this demo look broken.
+ * It has to be an absolute URL a DIFFERENT device can resolve. A QR encoding
+ * `localhost` is useless to the phone scanning it, which is the single easiest
+ * way to make this demo look broken — so the value is chosen in order of how
+ * likely it is to be reachable:
+ *
+ * 1. `HANKO_ORIGIN` — set this for a tunnel, where only you know the URL.
+ * 2. `PORTLESS_URL` — injected by `portless run`, correct without configuring
+ *    anything.
+ * 3. `localhost` — right for a single-machine run, and honest about being
+ *    useless to a second device. Deliberately NOT a plausible-looking LAN
+ *    hostname: a default that points somewhere unreachable fails silently,
+ *    which is worse than one that is obviously local.
  */
-export const ORIGIN = process.env.HANKO_ORIGIN ?? `https://hanko.local`;
+export const ORIGIN =
+  process.env.HANKO_ORIGIN ??
+  process.env.PORTLESS_URL ??
+  `http://localhost:4321`;
+
+// Said once at boot rather than left to be discovered by a phone that scans a
+// QR and lands nowhere. A camera also refuses to open on a non-HTTPS origin, so
+// a localhost run cannot do the scan path at all.
+if (/localhost|127\.0\.0\.1/u.test(ORIGIN)) {
+  console.warn(
+    `[hanko] Origin is ${ORIGIN} — reachable only from this machine.\n` +
+      `        The QR will not work from a phone, and the camera needs HTTPS.\n` +
+      `        Run \`yarn demo:share\` and set HANKO_ORIGIN to the printed URL.`
+  );
+}
 
 export const hanko = new HankoServer({
   store: new MemoryDeviceGrantStore(),

@@ -3,55 +3,129 @@
 The whole flow across three devices: a screen that cannot be typed into, a
 phone that approves it, and an API in between.
 
-## Run it
+## Just on this machine
 
 ```sh
 yarn demo
 ```
 
-Then open <http://localhost:4321>. That builds the library first — the example
-imports `@saeris/hanko` by its real package name and resolves through its
-`exports` map, so it exercises the published artifact rather than reaching into
-source.
+Open <http://localhost:4321>. Two browser windows are enough to walk the flow —
+one on `/tv`, one on `/link` — and the typed-code path works fully.
 
-## Run it across devices
+That builds the library first. The example imports `@saeris/hanko` by package
+name and resolves through its `exports` map, so it exercises the published
+surface rather than reaching into source.
 
-The phone needs **HTTPS**, not just LAN access. Two reasons, both hard:
+## With a real phone
 
-- `getUserMedia` (camera scanning) requires a secure context. `localhost` is
-  exempt; `http://192.168.x.x` is **not**, so the camera silently never opens.
-- Universal links and PWA install both need HTTPS with a real association file.
+The phone needs **HTTPS**, not just network access. Two hard reasons:
 
-[Portless][portless] provides that locally:
+- `getUserMedia` — the camera, for scanning — requires a secure context.
+  `localhost` is exempt; `http://192.168.x.x` is **not**, so the camera never
+  opens and the failure is silent.
+- Universal links and PWA install both require HTTPS.
 
-```sh
-npm install -g portless
-yarn demo:lan
-```
+### Option A — ngrok (recommended on Windows)
 
-This serves at `https://hanko.local`, reachable from any device on the network.
-Set `HANKO_ORIGIN` to match, because the QR encodes that origin — a QR pointing
-at `localhost` is useless to the phone scanning it, which is the single easiest
-way to make this demo look broken:
+A publicly-trusted certificate, so **nothing needs installing on the phone**.
+
+One-time setup: an ngrok account (free) and
 
 ```sh
-HANKO_ORIGIN=https://hanko.local yarn demo:lan
+ngrok config add-authtoken <token>
 ```
 
-### Trusting the certificate on your phone
+Then it is two runs, because the tunnel URL is not known until the tunnel is up
+and the QR has to encode it:
 
-Portless generates a local CA and trusts it on the machine running it. Other
-devices do not know about it, and an untrusted certificate blocks the camera —
-so the phone needs it installed once:
+```sh
+# 1. Start it, and read the ngrok URL it prints.
+yarn demo:share
+#      ngrok -> https://1817-71-63-254-225.ngrok-free.app
 
-1. Find the CA (`portless doctor` prints its path).
-2. Get it onto the phone — AirDrop, email, or serve it over the LAN.
-3. **iOS:** Settings → General → VPN & Device Management → install the profile,
-   then Settings → General → About → **Certificate Trust Settings** and enable
-   it there. The second step is separate and easy to miss; without it the
-   certificate is installed but not trusted.
-4. **Android:** Settings → Security → Encryption & credentials → Install a
-   certificate → CA certificate.
+# 2. Stop it (Ctrl+C), start again with that URL as the origin.
+HANKO_ORIGIN=https://1817-71-63-254-225.ngrok-free.app yarn demo:share
+```
+
+**Free ngrok assigns a new URL on every restart**, so step 2's value is only
+good for that session. Check the `/tv` page shows the ngrok host next to "Visit
+this link in a browser" — if it says `localhost` or `hanko.localhost`, the QR
+points somewhere your phone cannot reach and nothing will work.
+
+Two things worth knowing: the tunnel is public while it runs, and free ngrok
+interstitials a browser warning page on first visit. Tap through it once on the
+phone.
+
+### Option B — Portless LAN mode (macOS and Linux only)
+
+```sh
+portless proxy start --lan
+portless run --name hanko
+```
+
+Serves at `https://hanko.local`, reachable from any device on the WiFi.
+
+**This does not work on Windows.** LAN mode publishes over mDNS, and Portless
+implements publishing only via `dns-sd` (macOS) and `avahi-publish-address`
+(Linux). Having Bonjour installed does not help — the Windows build has no
+publisher and refuses to start:
+
+```
+Error: LAN mode requires mDNS publishing, which is not supported on this platform.
+```
+
+#### Trusting the certificate on the phone
+
+LAN mode uses Portless's own CA, which other devices do not know about. An
+untrusted certificate blocks the camera, so the phone needs the CA installed
+once.
+
+The CA lives in Portless's state directory — `portless doctor` prints the path,
+typically:
+
+| Platform      | Path                              |
+| ------------- | --------------------------------- |
+| macOS / Linux | `~/.portless/ca.pem`              |
+| Windows       | `C:\Users\<you>\.portless\ca.pem` |
+
+Copy `ca.pem` (**not** `ca-key.pem` — that is the private key and must never
+leave the machine) to the phone by AirDrop, email, or a download link.
+
+**iOS** takes two separate steps, and skipping the second is the usual reason
+this appears not to work:
+
+1. Open the file — iOS offers to install a profile.
+2. Settings → General → VPN & Device Management → install it.
+3. Settings → General → About → **Certificate Trust Settings** → enable full
+   trust for `portless Local CA`.
+
+Step 3 is a different screen from step 2. Without it the certificate is
+installed but not trusted, and the camera still refuses.
+
+**Android:** Settings → Security → Encryption & credentials → Install a
+certificate → CA certificate. Android warns loudly about user-installed CAs;
+that warning is accurate and worth removing the certificate afterwards.
+
+#### Reaching it by name, not by IP
+
+The certificate covers `localhost`, `*.localhost`, and `*.local` — so
+`hanko.local` validates and `192.168.x.x` does **not**. The phone has to
+resolve the hostname. iOS resolves `.local` natively; Android is less reliable
+and may need the URL opened from a QR rather than typed.
+
+## Walking the flow
+
+1. **Phone:** open `/signin` and enter anything. Whatever you enter becomes the
+   identity the other device inherits.
+2. **Second screen:** open `/tv` — a browser tab, a Pi, a Fire Stick. It shows
+   a code and a QR and starts polling.
+3. **Phone:** scan the QR, or open `/link` and type the code.
+4. **Phone:** re-enter the code to confirm you can see the screen you are
+   authorizing, then approve.
+5. **Second screen:** the next poll picks it up and shows who it signed in as.
+
+Every transition is logged in the terminal running the dev server, so the flow
+can be followed across three devices without attaching a debugger to any.
 
 ## The three surfaces
 
@@ -61,21 +135,8 @@ so the phone needs it installed once:
 | `/link`   | your phone            | resolves the code, runs the challenge, approves |
 | `/signin` | your phone            | stands in for the host app's real auth          |
 
-Run `/tv` in a browser tab, on a Pi, or on a Fire Stick — the page is inline
-CSS and dependency-free JavaScript, so it costs nothing on modest hardware.
-
-## Walking the flow
-
-1. Sign in at `/signin` on your phone. Whatever you enter becomes the identity
-   the other device inherits.
-2. Open `/tv` on a second device.
-3. Scan its QR, or type the code at `/link`.
-4. Re-enter the code to confirm you can see the screen you are authorizing,
-   then approve.
-5. The TV picks it up on its next poll and shows who it signed in as.
-
-Transitions are logged in the terminal running the dev server, so the flow can
-be followed across three devices without attaching a debugger to any of them.
+`/tv` is inline CSS and dependency-free JavaScript, so it costs nothing on
+modest hardware.
 
 ## What this demo takes shortcuts on
 
