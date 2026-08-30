@@ -260,9 +260,14 @@ const subject = authenticate(Astro.request);
     approveBtn.addEventListener(`click`, () => void client.approve());
     $(`deny`).addEventListener(`click`, () => void client.deny());
 
-    // Handles an installed PWA launched by a scanned link. Falls back to
-    // location.href where launchQueue is unsupported (Safari, Firefox), so no
-    // branching is needed here.
+    // Handles an installed PWA launched by a scanned link.
+    //
+    // The location fallback is left OFF. This page is reached by ordinary
+    // navigation far more often than by launch, and firing on every visit
+    // submitted whatever the URL looked like as though it were a scanned code
+    // — which failed, showed "that code is not valid", and tore down the
+    // camera that was still starting up. A launch we cannot detect just means
+    // the user scans or types, which is the path they were on anyway.
     consumeLaunchTarget((href) => {
       const link = parseApprovalLink(href);
       if (link && client.state === `idle`) void client.submitCode(link.userCode);

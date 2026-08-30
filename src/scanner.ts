@@ -150,11 +150,15 @@ export const parseScannedCode = (
       return { userCode: fromQuery, verificationUri: url.toString() };
     }
     // Some hosts put the code in the path (`/link/WDJB-MJHT`) rather than the
-    // query, so fall back to the last non-empty segment.
-    const segment = url.pathname.split(`/`).filter(Boolean).pop();
-    return segment === undefined
-      ? null
-      : { userCode: segment, verificationUri: url.toString() };
+    // query. Only worth reading when there is a segment BEYOND the route
+    // itself: a bare `/link` would otherwise yield the code "link", which the
+    // server duly rejects — and a spurious rejection on page load looks to the
+    // user like their real code failed.
+    const segments = url.pathname.split(`/`).filter(Boolean);
+    if (segments.length < 2) return null;
+
+    const segment = segments[segments.length - 1];
+    return { userCode: segment, verificationUri: url.toString() };
   } catch {
     // Not a URL. Treat it as a bare code, but only if it could plausibly be
     // one — otherwise every QR in the room becomes a candidate code.

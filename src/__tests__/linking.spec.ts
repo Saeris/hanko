@@ -76,6 +76,19 @@ describe(`parseApprovalLink`, () => {
     expect(
       parseApprovalLink(`https://example.com/link/WDJB-MJHT`)?.userCode
     ).toBe(`WDJB-MJHT`);
+    expect(
+      parseApprovalLink(`hanko://WDJB-MJHT`, { scheme: `hanko` })?.userCode
+    ).toBe(`WDJB-MJHT`);
+  });
+
+  it(`does not read the route itself as a code`, () => {
+    // WHY: this shipped. Visiting the approval page normally made the path
+    // fallback return the code "link", which was auto-submitted, rejected,
+    // and surfaced as "that code is not valid" — on a page where the user had
+    // scanned nothing. The failure then tore down the starting camera, so a
+    // parser bug presented as a dead viewfinder.
+    expect(parseApprovalLink(`https://example.com/link`)).toBeNull();
+    expect(parseApprovalLink(`https://example.com/link/`)).toBeNull();
   });
 
   it(`ignores an unregistered scheme`, () => {
@@ -184,13 +197,32 @@ describe(`pWA launch handling`, () => {
     vi.unstubAllGlobals();
   });
 
-  it(`falls back to the current URL where launchQueue is unsupported`, () => {
-    // WHY: Safari and Firefox have no `launchQueue` as of 2026. Without this
-    // fallback the approval screen would silently do nothing on those
-    // browsers — which is most of the iOS install base.
+  it(`stays silent where launchQueue is unsupported unless asked`, () => {
+    // WHY: Safari and Firefox have no `launchQueue` as of 2026, so the
+    // fallback fires on EVERY page load — an ordinary visit is
+    // indistinguishable from a launch. A caller that treats the result as "the
+    // user arrived from a scanned link" then acts on a URL nobody followed.
+    //
+    // That is not hypothetical: it shipped. The approval page auto-submitted
+    // its own `/link` URL as a code on load, the server rejected it, and the
+    // resulting "that code is not valid" tore down the camera that was still
+    // starting. Silence is the safe default; opting in is one argument.
     const onTarget = vi.fn<(href: string) => void>();
     consumeLaunchTarget(onTarget, {
       currentHref: `https://example.com/link?user_code=WDJB-MJHT`
+    });
+
+    expect(onTarget).not.toHaveBeenCalled();
+  });
+
+  it(`falls back to the current URL when the caller opts in`, () => {
+    // WHY: a page reached ONLY by launch has no ambiguity to protect against,
+    // and on Safari the fallback is the only signal available. The capability
+    // has to survive the safer default, or the opt-out becomes a dead end.
+    const onTarget = vi.fn<(href: string) => void>();
+    consumeLaunchTarget(onTarget, {
+      currentHref: `https://example.com/link?user_code=WDJB-MJHT`,
+      fallbackToLocation: true
     });
 
     expect(onTarget).toHaveBeenCalledWith(

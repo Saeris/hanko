@@ -95,6 +95,29 @@ export const buildAppSchemeUrl = (
  * Returning the `source` lets a host tell "the OS routed this to us" from "the
  * user is on the web page", which changes what the UI should offer.
  */
+/**
+ * Read a code out of a path-style link (`/link/WDJB-MJHT`).
+ *
+ * A web URL needs a segment BEYOND the route itself. `/link` alone would
+ * otherwise yield the code "link" — which the server rejects, so an ordinary
+ * visit to the approval page reports itself as a failed code. That shipped
+ * once: it showed "that code is not valid" on load and tore down the camera
+ * that was mid-startup.
+ *
+ * A custom-scheme link has no route to strip — `hanko://WDJB-MJHT` carries the
+ * code as its only segment — so one segment is enough there.
+ */
+const pathCode = (url: URL, isCustomScheme: boolean): string | undefined => {
+  const segments = url.pathname.split(`/`).filter(Boolean);
+  // `hanko://WDJB-MJHT` parses the code as the HOST, leaving no path at all.
+  if (isCustomScheme && segments.length === 0) {
+    return url.hostname.length > 0 ? url.hostname : undefined;
+  }
+  return segments.length >= (isCustomScheme ? 1 : 2)
+    ? segments[segments.length - 1]
+    : undefined;
+};
+
 export const parseApprovalLink = (
   href: string,
   { codeParam = `user_code`, scheme }: Partial<LinkConfig> = {}
@@ -116,10 +139,7 @@ export const parseApprovalLink = (
   }
 
   const userCode =
-    url.searchParams.get(codeParam) ??
-    // Path-style links (`/link/WDJB-MJHT`) are a common route design, and a
-    // custom-scheme URL often has the code as its only path segment.
-    url.pathname.split(`/`).filter(Boolean).pop();
+    url.searchParams.get(codeParam) ?? pathCode(url, isCustomScheme);
 
   if (userCode === undefined || userCode.length === 0) return null;
 
@@ -232,12 +252,19 @@ export const pwaLaunchHandler = (): object => ({
  * already be correct — but when the app was cold-started or the consumer runs
  * before navigation settles, `launchQueue` is the only reliable source.
  *
- * Falls back to the current location where `launchQueue` is unsupported
- * (Safari and Firefox, as of 2026), so callers need no branching.
+ * Where `launchQueue` is unsupported — Safari and Firefox, as of 2026 — this
+ * calls back with the current location ONLY when `fallbackToLocation` is set.
+ * It defaults to false because the fallback cannot tell a launch from an
+ * ordinary page load: it fires on every visit, and a caller that treats the
+ * result as "the user just arrived from a link" will act on a URL nobody
+ * followed. Opt in when the page is only ever reached by launch.
  */
 export const consumeLaunchTarget = (
   onTarget: (href: string) => void,
-  { currentHref }: { currentHref?: string } = {}
+  {
+    currentHref,
+    fallbackToLocation = false
+  }: { currentHref?: string; fallbackToLocation?: boolean } = {}
 ): void => {
   // Narrowed by runtime checks rather than a cast: neither `launchQueue` nor
   // `location` exists on a server runtime, and `launchQueue` is absent in
@@ -256,7 +283,10 @@ export const consumeLaunchTarget = (
 
   const queue = scope.launchQueue;
   if (!isLaunchQueue(queue)) {
-    if (fallback !== undefined) onTarget(fallback);
+    // Opt-in only. Firing here on every load would report an ordinary visit as
+    // a launch, and a caller acting on that URL acts on something nobody
+    // followed.
+    if (fallbackToLocation && fallback !== undefined) onTarget(fallback);
     return;
   }
 

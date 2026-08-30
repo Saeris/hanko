@@ -357,7 +357,11 @@ build the scanner as an enhancement over it, never the only way in.
 ```ts
 import { consumeLaunchTarget, parseApprovalLink } from "@saeris/hanko/approve";
 
-// Reads launchQueue where supported, falls back to location.href elsewhere
+// Reads launchQueue where supported. Safari and Firefox have none, and the
+// `location.href` fallback is opt-in (`fallbackToLocation: true`) because it
+// cannot tell a launch from an ordinary page load — it fires on every visit.
+// Turn it on only for a page reached exclusively by launch; otherwise a plain
+// visit submits its own URL as a code and fails.
 consumeLaunchTarget((href) => {
   const link = parseApprovalLink(href);
   if (link) void client.submitCode(link.userCode);

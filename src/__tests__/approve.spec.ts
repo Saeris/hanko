@@ -290,6 +290,15 @@ describe(`parseScannedCode`, () => {
     ).toBe(`WDJB-MJHT`);
   });
 
+  it(`does not read the route itself as a code`, () => {
+    // WHY: a single-segment URL is a ROUTE, not a code carrier. Reading
+    // `/link` as the code "link" turns an ordinary page load into a failed
+    // approval attempt — which is how a spurious "code is not valid" reached
+    // a screen where nothing had been scanned.
+    expect(parseScannedCode(`https://example.com/link`)).toBeNull();
+    expect(parseScannedCode(`https://example.com/`)).toBeNull();
+  });
+
   it(`accepts a bare code`, () => {
     expect(parseScannedCode(`WDJB-MJHT`)).toEqual({ userCode: `WDJB-MJHT` });
   });
