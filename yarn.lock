@@ -1306,6 +1306,7 @@ __metadata:
     "@saeris/hanko": "link:../.."
     "@types/node": "npm:^25.9.1"
     astro: "npm:~7.2.2"
+    portless: "npm:^0.15.6"
   languageName: unknown
   linkType: soft
 
@@ -3543,6 +3544,16 @@ __metadata:
   version: 7.0.0
   resolution: "pngjs@npm:7.0.0"
   checksum: 10/e843ebbb0df092ee0f3a3e7dbd91ff87a239a4e4c4198fff202916bfb33b67622f4b83b3c29f3ccae94fcb97180c289df06068624554f61686fe6b9a4811f7db
+  languageName: node
+  linkType: hard
+
+"portless@npm:^0.15.6":
+  version: 0.15.6
+  resolution: "portless@npm:0.15.6"
+  bin:
+    portless: dist/cli.js
+  checksum: 10/3bc76f259da559598357c88bd5c0eb18a2e9acbb7b25a46cde395c434b2ff1d479aa02b0133e861d090a6f77c7dbaf18a3095d18b091f2ebf45a39a4e7c59df7
+  conditions: (os=darwin | os=linux | os=win32)
   languageName: node
   linkType: hard
 

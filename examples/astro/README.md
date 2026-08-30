@@ -29,9 +29,12 @@ The phone needs **HTTPS**, not just network access. Two hard reasons:
 
 A publicly-trusted certificate, so **nothing needs installing on the phone**.
 
-One-time setup: an ngrok account (free) and
+[Portless][portless] is a dev dependency of this example, so `yarn install`
+covers it — no global install. You do need the ngrok binary and a free account:
 
 ```sh
+# once, if you do not already have it
+choco install ngrok        # or: brew install ngrok
 ngrok config add-authtoken <token>
 ```
 
@@ -56,14 +59,31 @@ Two things worth knowing: the tunnel is public while it runs, and free ngrok
 interstitials a browser warning page on first visit. Tap through it once on the
 phone.
 
-### Option B — Portless LAN mode (macOS and Linux only)
+**If it says authentication is not configured**, check for orphaned agents
+before touching your token. Free ngrok allows three simultaneous sessions, and
+a Ctrl+C that does not fully clean up leaves one holding a slot. The fourth
+attempt fails with `ERR_NGROK_108`, which Portless surfaces as an
+authentication error rather than a session-limit one:
 
 ```sh
-portless proxy start --lan
-portless run --name hanko
+# Windows
+powershell -Command "Get-Process ngrok | Stop-Process -Force"
+
+# macOS / Linux
+pkill ngrok
 ```
 
-Serves at `https://hanko.local`, reachable from any device on the WiFi.
+### Option B — Portless LAN mode (macOS and Linux only)
+
+Run from `examples/astro`, so the local `portless` binary is on the path:
+
+```sh
+yarn portless proxy start --lan
+yarn portless run --name hanko astro dev
+```
+
+Serves at `https://hanko.local`, reachable from any device on the WiFi. Set
+`HANKO_ORIGIN=https://hanko.local` so the QR encodes it.
 
 **This does not work on Windows.** LAN mode publishes over mDNS, and Portless
 implements publishing only via `dns-sd` (macOS) and `avahi-publish-address`

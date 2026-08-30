@@ -86,7 +86,7 @@
     "format": "vp check --fix",
     "test": "vp test --fileParallelism",
     "demo": "vp pack && yarn workspace @saeris/hanko-example-astro run dev",
-    "demo:share": "vp pack && portless run --name hanko --ngrok"
+    "demo:share": "vp pack && yarn workspace @saeris/hanko-example-astro run share"
   },
   "dependencies": {
     "etiket": "^0.12.0"

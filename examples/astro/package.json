@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "astro dev",
+    "share": "portless run --name hanko --ngrok astro dev",
     "build": "astro build",
     "preview": "astro preview"
   },
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@astrojs/node": "^11.1.0",
-    "@types/node": "^25.9.1"
+    "@types/node": "^25.9.1",
+    "portless": "^0.15.6"
   }
 }
