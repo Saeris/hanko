@@ -49,8 +49,13 @@ const tunnelsAt = async (apiPort) => {
   }
 };
 
-const findTunnelUrl = async (localPort, attempts = 40) => {
+const findTunnelUrl = async (localPort, isAlive, attempts = 40) => {
   for (let i = 0; i < attempts; i++) {
+    // Stop the moment the child is gone. ngrok failing to start is the common
+    // case — a session limit, usually — and continuing to poll after that can
+    // only surface a tunnel that belongs to something else.
+    if (!isAlive()) return { url: null, matched: false };
+
     const found = await Promise.all(AGENT_API_PORTS.map(tunnelsAt));
     const tunnels = found.flat().filter((t) => t.proto === `https`);
 
@@ -76,31 +81,74 @@ const findTunnelUrl = async (localPort, attempts = 40) => {
  * Fixed rather than left to Portless to choose.
  *
  * The port is how a tunnel is matched to this server, so it has to be known
- * here BEFORE the tunnel exists. Letting Portless pick would mean parsing it
- * back out of another process's stdout, which is the kind of coupling that
- * breaks on a cosmetic logging change.
+ * here BEFORE the tunnel exists. Letting Portless auto-assign would mean
+ * parsing it back out of another process's stdout, which is the kind of
+ * coupling that breaks on a cosmetic logging change.
+ *
+ * It has to go through `--app-port`. Portless auto-assigns and does NOT read
+ * `PORT` from the environment, so setting that pins nothing: the server comes
+ * up on some other port, and a matcher looking for this one finds only a stale
+ * tunnel from an earlier run that happens to still be forwarding to it.
  */
 const PORT = Number(process.env.PORT ?? 4792);
 
 const child = spawn(
   `yarn`,
-  [`portless`, `run`, `--name`, `hanko`, `--ngrok`, `astro`, `dev`],
-  { stdio: `inherit`, shell: true, env: { ...process.env, PORT: String(PORT) } }
+  [
+    `portless`,
+    `run`,
+    `--name`,
+    `hanko`,
+    `--app-port`,
+    String(PORT),
+    `--ngrok`,
+    `astro`,
+    `dev`
+  ],
+  { stdio: `inherit`, shell: true }
 );
 
+/**
+ * Whether the child is still alive.
+ *
+ * Discovery reads a machine-global API that knows nothing about this run, so
+ * without this it will happily poll for twenty seconds after Portless has
+ * already died — and print a tunnel belonging to some other process. The QR
+ * has to be a claim about THIS server, which means the server has to exist.
+ */
+let childAlive = true;
+
 child.on(`exit`, (code) => {
+  childAlive = false;
   process.exit(code ?? 0);
 });
 
-const { url } = await findTunnelUrl(PORT);
+const { url } = await findTunnelUrl(PORT, () => childAlive);
+
+/**
+ * How many ngrok agents are already running.
+ *
+ * Worth knowing because Portless reports EVERY ngrok start failure as
+ * "authentication is not configured", including the session limit — which is
+ * a different problem with a different fix, and the far more likely one when
+ * a previous run left agents behind. The free plan allows three.
+ */
+const orphanCount = (await Promise.all(AGENT_API_PORTS.map(tunnelsAt))).filter(
+  (t) => t.length > 0
+).length;
 
 if (url === null) {
   console.log(
-    `\n  No ngrok tunnel found forwarding to port ${PORT}.\n` +
-      `  The dev server is still running locally.\n\n` +
-      `  If ngrok reported a session limit, an agent from an earlier run is\n` +
-      `  probably still holding a slot. On Windows:\n\n` +
-      `    taskkill /IM ngrok.exe /F\n`
+    `\n  No ngrok tunnel found forwarding to port ${PORT}.\n${
+      orphanCount > 0
+        ? `\n  ${orphanCount} ngrok agent(s) are already running. The free plan allows\n` +
+          `  three at once, so a leftover from an earlier run can block a new\n` +
+          `  tunnel — which Portless reports as "authentication is not\n` +
+          `  configured" even when your token is fine. Clear them:\n\n` +
+          `    taskkill /IM ngrok.exe /F        (Windows)\n` +
+          `    pkill ngrok                      (macOS / Linux)\n`
+        : `  The dev server is still running locally.\n`
+    }`
   );
 } else {
   console.log(
