@@ -12,86 +12,45 @@
 import { spawn } from "node:child_process";
 import { qrToTerminal } from "../src/lib/terminal-qr.ts";
 
-const wait = (ms) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
 /**
- * Ask ngrok what URL it handed out.
+ * Read the tunnel URL from Portless's own output.
  *
- * Two things make this harder than reading one endpoint. ngrok's inspection API
- * is per AGENT, not per machine: a second agent finds :4040 taken and quietly
- * moves to :4041, so the well-known port belongs to whichever agent started
- * first — often an orphan from an earlier run, since a killed wrapper does not
- * always take its tunnel with it. And every agent reports an https tunnel, so
- * "the first https one" identifies nothing.
+ * The obvious approach — ask ngrok's inspection API — does not work, and the
+ * reasons are worth recording because each looks solvable in isolation:
  *
- * Both are fixed by the same fact: a tunnel records the local address it
- * forwards to. Ours is the one pointing at the port our dev server bound.
- * Scanning a few API ports and matching on `config.addr` is what makes the
- * printed QR provably the tunnel in front of us, rather than the oldest one
- * still lingering on the machine.
+ * 1. The API is per AGENT, not per machine. A second agent finds :4040 taken
+ *    and moves to :4041, so the well-known port belongs to whichever agent
+ *    started first, often an orphan.
+ * 2. Every agent reports an https tunnel, so `proto` identifies nothing.
+ * 3. Matching `config.addr` against our port narrows it — until a leftover
+ *    agent is still forwarding to that same port, which a FIXED port makes
+ *    routine rather than unlucky. Two tunnels, one destination, no way to
+ *    tell the live one from the dead one.
+ *
+ * Every one of those is a symptom of inferring ownership from global state.
+ * Portless knows which agent it started and prints the URL; reading the line
+ * it already emits is both simpler and exact. The cost is that stdout must be
+ * piped rather than inherited, so it is echoed through below.
  */
-// oxlint-disable no-await-in-loop
-const AGENT_API_PORTS = [4040, 4041, 4042, 4043];
-
-/** Tunnels from one agent, or `[]` if nothing is listening there. */
-const tunnelsAt = async (apiPort) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:${apiPort}/api/tunnels`);
-    if (!res.ok) return [];
-    const body = await res.json();
-    return body.tunnels ?? [];
-  } catch {
-    // No agent on this port. Expected for most of them.
-    return [];
-  }
-};
-
-const findTunnelUrl = async (localPort, isAlive, attempts = 40) => {
-  for (let i = 0; i < attempts; i++) {
-    // Stop the moment the child is gone. ngrok failing to start is the common
-    // case — a session limit, usually — and continuing to poll after that can
-    // only surface a tunnel that belongs to something else.
-    if (!isAlive()) return { url: null, matched: false };
-
-    const found = await Promise.all(AGENT_API_PORTS.map(tunnelsAt));
-    const tunnels = found.flat().filter((t) => t.proto === `https`);
-
-    // Identify by destination. `addr` is `http://127.0.0.1:<port>`, and the
-    // port is what ties a tunnel to OUR dev server.
-    const ours = tunnels.find((t) =>
-      String(t.config?.addr ?? ``).endsWith(`:${localPort}`)
-    );
-    if (ours?.public_url) return { url: ours.public_url, matched: true };
-
-    // Nothing matched yet, but tunnels exist: either ours is still coming up,
-    // or these are all orphans. Keep waiting rather than printing one of them
-    // — a QR for the wrong tunnel is worse than no QR, because it fails at the
-    // phone with no hint as to why.
-    await wait(500);
-  }
-
-  return { url: null, matched: false };
-};
-// oxlint-enable no-await-in-loop
+const NGROK_LINE = /ngrok\s+->\s+(https:\/\/\S+)/u;
 
 /**
- * Fixed rather than left to Portless to choose.
+ * Fixed rather than left to Portless to auto-assign.
  *
- * The port is how a tunnel is matched to this server, so it has to be known
- * here BEFORE the tunnel exists. Letting Portless auto-assign would mean
- * parsing it back out of another process's stdout, which is the kind of
- * coupling that breaks on a cosmetic logging change.
+ * Not for tunnel matching any more — Portless reports its own tunnel URL, so
+ * nothing has to be matched. A stable port is just good DX: the localhost URL
+ * stays the same between runs, so a browser tab survives a restart.
  *
- * It has to go through `--app-port`. Portless auto-assigns and does NOT read
- * `PORT` from the environment, so setting that pins nothing: the server comes
- * up on some other port, and a matcher looking for this one finds only a stale
- * tunnel from an earlier run that happens to still be forwarding to it.
+ * It has to go through `--app-port`; Portless does not read `PORT` from the
+ * environment.
  */
 const PORT = Number(process.env.PORT ?? 4792);
 
+/**
+ * Piped rather than inherited, so this process can read the tunnel URL out of
+ * Portless's output. Every line is echoed straight through, so the terminal
+ * still shows exactly what Portless printed.
+ */
 const child = spawn(
   `yarn`,
   [
@@ -105,54 +64,100 @@ const child = spawn(
     `astro`,
     `dev`
   ],
-  { stdio: `inherit`, shell: true }
+  {
+    stdio: [`inherit`, `pipe`, `pipe`],
+    shell: true,
+    // Its own process group on POSIX, so a tree kill can reach the
+    // grandchildren. Windows uses taskkill /T instead.
+    detached: process.platform !== `win32`
+  }
 );
 
 /**
- * Whether the child is still alive.
+ * Make sure the child tree dies with us.
  *
- * Discovery reads a machine-global API that knows nothing about this run, so
- * without this it will happily poll for twenty seconds after Portless has
- * already died — and print a tunnel belonging to some other process. The QR
- * has to be a claim about THIS server, which means the server has to exist.
+ * The whole class of bugs this script kept hitting — stale tunnels, a port
+ * already in use, ngrok's session limit exhausted by nobody — came from
+ * processes outliving the terminal that started them. Killing the wrapper is
+ * not enough: `yarn` spawns portless, which spawns ngrok and astro, and on
+ * Windows only a tree kill reaches them.
  */
-let childAlive = true;
+const killTree = () => {
+  const { pid } = child;
+  if (!pid || child.killed) return;
+  if (process.platform === `win32`) {
+    spawn(`taskkill`, [`/pid`, String(pid), `/T`, `/F`], {
+      stdio: `ignore`
+    });
+  } else {
+    // Negative pid signals the whole group, which is why the child is
+    // detached: without its own group there is nothing to signal but itself,
+    // and the grandchildren (ngrok, astro) survive.
+    try {
+      process.kill(-pid, `SIGTERM`);
+    } catch {
+      child.kill(`SIGTERM`);
+    }
+  }
+};
 
-child.on(`exit`, (code) => {
-  childAlive = false;
-  process.exit(code ?? 0);
-});
-
-const { url } = await findTunnelUrl(PORT, () => childAlive);
+for (const signal of [`SIGINT`, `SIGTERM`, `SIGHUP`]) {
+  process.on(signal, () => {
+    killTree();
+    process.exit(0);
+  });
+}
+process.on(`exit`, killTree);
 
 /**
- * How many ngrok agents are already running.
+ * Echo the child through, watching for the line that names the tunnel.
  *
- * Worth knowing because Portless reports EVERY ngrok start failure as
- * "authentication is not configured", including the session limit — which is
- * a different problem with a different fix, and the far more likely one when
- * a previous run left agents behind. The free plan allows three.
+ * Printed once. Portless can re-announce its URL, and a second QR scrolling
+ * the first off the screen is worse than none — the one still visible would be
+ * the older of the two.
  */
-const orphanCount = (await Promise.all(AGENT_API_PORTS.map(tunnelsAt))).filter(
-  (t) => t.length > 0
-).length;
+let printed = false;
 
-if (url === null) {
-  console.log(
-    `\n  No ngrok tunnel found forwarding to port ${PORT}.\n${
-      orphanCount > 0
-        ? `\n  ${orphanCount} ngrok agent(s) are already running. The free plan allows\n` +
-          `  three at once, so a leftover from an earlier run can block a new\n` +
-          `  tunnel — which Portless reports as "authentication is not\n` +
-          `  configured" even when your token is fine. Clear them:\n\n` +
-          `    taskkill /IM ngrok.exe /F        (Windows)\n` +
-          `    pkill ngrok                      (macOS / Linux)\n`
-        : `  The dev server is still running locally.\n`
-    }`
-  );
-} else {
-  console.log(
+const printQr = (url) => {
+  if (printed) return;
+  printed = true;
+  process.stdout.write(
     `\n  Scan to open the demo on your phone:\n\n` +
-      `${qrToTerminal(url)}\n\n  ${url}\n`
+      `${qrToTerminal(url)}\n\n  ${url}\n\n`
   );
-}
+};
+
+const watch = (stream, out) => {
+  let buffered = ``;
+  stream.on(`data`, (chunk) => {
+    out.write(chunk);
+    buffered += chunk.toString();
+
+    const lines = buffered.split(/\r?\n/u);
+    // Keep the last fragment: a URL split across two chunks would not match.
+    buffered = lines.pop() ?? ``;
+
+    for (const line of lines) {
+      const match = NGROK_LINE.exec(line);
+      const url = match?.[1];
+      if (url) printQr(url);
+    }
+  });
+};
+
+watch(child.stdout, process.stdout);
+watch(child.stderr, process.stderr);
+
+child.on(`exit`, (code) => {
+  if (!printed) {
+    process.stdout.write(
+      `\n  Portless exited before reporting an ngrok tunnel.\n\n` +
+        `  If it said authentication is not configured, check that first —\n` +
+        `  but it prints that for every ngrok failure, including the free\n` +
+        `  plan's three-session limit. Leftover agents are the usual cause:\n\n` +
+        `    taskkill /IM ngrok.exe /F        (Windows)\n` +
+        `    pkill ngrok                      (macOS / Linux)\n\n`
+    );
+  }
+  process.exit(code ?? 0);
+});
