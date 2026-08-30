@@ -101,13 +101,20 @@ describe(`edge handlers`, () => {
     await expect(response.json()).resolves.toEqual({ error: `expired_token` });
   });
 
-  it(`never lets the device code leave the server`, async () => {
-    // WHY: `device_code` is the bearer credential. If the approval endpoint
-    // echoed it, anyone who could resolve a user code could redeem the grant
-    // themselves.
+  it(`never returns either code to the approving device`, async () => {
+    // WHY: two different secrets, both of which must stay server-side.
+    //
+    // `device_code` is the bearer credential — echoing it would let anyone who
+    // could resolve a user code redeem the grant themselves.
+    //
+    // `user_code` is subtler and was a real hole. Echoing it back lets someone
+    // who arrived with a PHISHED code read it off this response and satisfy
+    // RFC 8628 §5.4's confirmation without ever looking at the device being
+    // authorized — which is the one thing that check exists to prove. The
+    // approving device must only ever know a code it already had.
     const { handlers } = setup();
     const authorized = await handlers.authorize(
-      post(`https://api.test/device/authorize`, {})
+      post(`https://api.test/device/authorize`, { client_id: `demo-tv` })
     );
     const grant = (await authorized.json()) as { user_code: string };
 
@@ -118,11 +125,11 @@ describe(`edge handlers`, () => {
     );
     const body = (await lookup.json()) as Record<string, unknown>;
 
-    // Normalized, not the display form: the store keeps codes separator-free so
-    // lookup never depends on formatting. Comparison against what the TV shows
-    // is normalized on both sides — see `codeEntryChallenge`.
-    expect(body.user_code).toBe(grant.user_code.replace(`-`, ``));
+    expect(body).not.toHaveProperty(`user_code`);
     expect(body).not.toHaveProperty(`device_code`);
+    // What it MAY return: enough to say which device is asking, so the user
+    // can recognise it, and nothing that helps them fake having seen it.
+    expect(body.client_id).toBe(`demo-tv`);
   });
 
   it(`refuses approval from an unauthenticated caller`, async () => {

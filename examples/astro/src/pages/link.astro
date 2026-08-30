@@ -67,18 +67,19 @@ const subject = authenticate(Astro.request);
 
           <div id="confirm" class="step hidden">
             <div class="callout">
-              <span class="callout-label">Code on that screen</span>
-              <strong class="callout-code" id="server-code" />
+              <span class="callout-label">Signing in</span>
+              <strong class="callout-client" id="client-name">a device</strong>
             </div>
 
             <div id="recheck" class="recheck">
               <p class="lead">
-                Type it to confirm you can see it on that screen. This is what
-                stops someone else&rsquo;s device being signed in as you.
+                Type the code shown on that device. This is what proves you can
+                see it, and it is what stops someone else&rsquo;s device being
+                signed in as you.
               </p>
 
               <label class="field">
-                <span>Enter the code</span>
+                <span>Code on that screen</span>
                 <input
                   id="challenge"
                   maxlength="8"
@@ -184,11 +185,11 @@ const subject = authenticate(Astro.request);
           `/api/link?user_code=${encodeURIComponent(userCode)}`
         );
         if (!res.ok) return null;
-        const body = (await res.json()) as {
-          user_code: string;
-          client_id?: string;
-        };
-        return { userCode: body.user_code, clientId: body.client_id };
+        const body = (await res.json()) as { client_id?: string };
+        // The code carried forward is the one WE supplied, not one the server
+        // echoed back — the server deliberately does not return it. That is
+        // what keeps a phished code off this screen.
+        return { userCode, clientId: body.client_id };
       },
       submit: async (userCode, approved) => {
         await fetch(`/api/link`, {
@@ -236,11 +237,12 @@ const subject = authenticate(Astro.request);
           show($(`confirm`), to === `confirming`);
 
           if (to === `confirming` && client.grant) {
-            // Re-grouped for display. The server stores codes normalized, so
-            // lookup never depends on formatting — but the other screen shows
-            // `KCVS-GZBV`, and a user comparing two slightly different strings
-            // loses exactly the confidence this check exists to build.
-            $(`server-code`).textContent = groupCode(client.grant.userCode);
+            // WHICH device is asking, never WHAT its code is. Rendering the
+            // code here would let someone who arrived with a phished link read
+            // it off this screen and pass the confirmation without ever
+            // looking at the device — defeating the only check that proves
+            // they can see it.
+            $(`client-name`).textContent = client.grant.clientId ?? `a device`;
 
             // The re-entry field only makes sense when the code arrived
             // without being read. Someone who typed it has already proven they
@@ -355,6 +357,10 @@ const subject = authenticate(Astro.request);
           void client.submitCode(link.userCode);
         },
         {
+          // Without this the callback receives a bare STRING, not an object,
+          // so `result.data` is undefined and every scan is silently discarded
+          // as "not a code". The library runs fine; it just never matches.
+          returnDetailedScanResult: true,
           // The rear camera — the front one points at the user, not at the
           // screen they are trying to scan.
           preferredCamera: `environment`,

@@ -236,10 +236,18 @@ export const createApprovalHandler =
         return json({ error: `invalid_code` }, 404);
       }
 
-      // Only what the approval screen needs. Never `device_code` — that is the
-      // bearer credential, and it must not leave the server.
+      // Deliberately does NOT return the user code.
+      //
+      // The approving device must never learn a code it did not already have.
+      // Echoing it back lets someone who arrived with a phished code read it
+      // off this response and satisfy the §5.4 confirmation without ever
+      // looking at the device being authorized — which is the one thing that
+      // check exists to prove. The client compares against what the USER
+      // typed; the server does the comparing, and answers yes or no.
+      //
+      // `device_code` is likewise never returned: it is the bearer credential
+      // and must not leave the server at all.
       return json({
-        user_code: grant.user_code,
         client_id: grant.clientId,
         scope: grant.scope
       });

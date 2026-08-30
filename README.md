@@ -83,10 +83,16 @@ not `H`: higher correction needs more modules to encode the same URL, so at a
 fixed size each module gets smaller — and on a clean screen, module size matters
 more than damage tolerance.
 
-**Show the code even when you show the QR.** [RFC 8628 §5.4][rfc-security] asks
-the approval page to display the code back so the user can confirm it matches
-their screen. That check is the only defense against a phished QR pointing at
-someone else's device.
+**Show the code on the device, never on the approval page.**
+[RFC 8628 §5.4][rfc-security] asks the user to confirm the code matches the
+device in front of them — which only means anything if the two screens are
+independent. An approval page that displays the code lets someone who arrived
+with a phished link read it there and "confirm" without ever looking at the
+device, which is the one thing that check exists to prove.
+
+`createApprovalHandler` therefore never returns `user_code`. The approving
+client compares against what the USER supplied; the server does the comparing
+and answers yes or no.
 
 ## Device
 

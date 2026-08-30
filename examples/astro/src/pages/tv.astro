@@ -67,7 +67,7 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
         <>
           <h1>Sign in to this device</h1>
 
-          <div class="paths">
+          <div class="paths" id="paths">
             <section class="path">
               <p class="lead">Visit this link in a browser</p>
               <p class="url">{typedUrl}</p>
@@ -126,9 +126,24 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
     status.dataset.tone = tone ?? ``;
   };
 
+  /**
+   * Replace the sign-in panel with an outcome.
+   *
+   * The code and QR are stale the moment the flow resolves — leaving them on
+   * screen invites someone to scan a code that can never work. A TV is also
+   * read from across a room, so the outcome has to be the whole screen rather
+   * than a line of small text under an unchanged panel.
+   */
+  const finish = (heading, detail, tone) => {
+    document.getElementById(`paths`)?.remove();
+    document.querySelector(`h1`).textContent = heading;
+    set(detail, tone);
+    document.body.dataset.settled = tone;
+  };
+
   const poll = async () => {
     if (Date.now() >= deadline) {
-      set(`This code expired. Reload to get a new one.`, `bad`);
+      finish(`That code expired`, `Reload this page to get a new one.`, `bad`);
       return;
     }
 
@@ -161,15 +176,25 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
         setTimeout(poll, wait * 1000);
         return;
       case `access_denied`:
-        set(`Sign-in was denied on your phone.`, `bad`);
+        finish(`Sign-in denied`, `Nothing was signed in on this device.`, `bad`);
         return;
       case `expired_token`:
-        set(`This code expired. Reload to get a new one.`, `bad`);
+        finish(
+          `That code expired`,
+          `Reload this page to get a new one.`,
+          `bad`
+        );
         return;
       case undefined:
-        // No error field means the grant was redeemed.
-        set(`Signed in as ${body.subject}`, `ok`);
-        document.body.dataset.signedIn = `true`;
+        // No error field means the grant was redeemed. The device replaces the
+        // whole screen rather than nudging a status line: the code and QR are
+        // now stale, and leaving them up invites someone to scan a code that
+        // will never resolve.
+        finish(
+          `You're signed in`,
+          `Signed in as ${body.subject}. You can start using this device.`,
+          `ok`
+        );
         return;
       default:
         // An unrecognized code is not evidence the user decided anything.
@@ -320,6 +345,13 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
     margin: 0;
     font-size: clamp(0.9rem, 1.2vw, 1.3rem);
     color: var(--ink-dim);
+  }
+
+  /* The settled screen centres its message rather than leaving it pinned to
+     the bottom where the status line used to sit. */
+  body[data-settled] main {
+    grid-template-rows: 1fr auto 1fr;
+    place-content: center;
   }
 
   .status[data-tone="ok"] {
