@@ -2,11 +2,9 @@
 import Base from "../layouts/Base.astro";
 import { authenticate } from "../lib/hanko.js";
 
-// A scanned QR carries the DEVICE, not the code. The code is still read off
-// that device's screen and typed here — knowing which device wants in is not
-// the same as being able to let it in.
-const scannedDevice = Astro.url.searchParams.get(`device`) ?? ``;
-// Kept for the RFC-default QR shape, where the code does arrive in the URL.
+// The code arrives three ways, all landing on the same parameter: typed by
+// hand, from a scanned QR (RFC 8628 §3.3.1's `verification_uri_complete`), or
+// from a universal link that opened a native app.
 const prefilled = Astro.url.searchParams.get(`user_code`) ?? ``;
 const subject = authenticate(Astro.request);
 ---
@@ -34,11 +32,16 @@ const subject = authenticate(Astro.request);
 
           <div
             id="scanner"
-            class:list={["step", (prefilled || scannedDevice) && "hidden"]}
+            class:list={["step", prefilled && "hidden"]}
           >
             <p class="lead">Point your camera at the code on the other device.</p>
             <div class="viewfinder">
-              <video id="video" playsinline muted></video>
+              <!-- `autoplay` and `playsinline` are both required on iOS: Safari
+                   will not begin playback of a srcObject stream without them,
+                   and without playback the element sits on a black first frame
+                   that the decoder samples forever. `muted` is what makes
+                   autoplay permissible at all. -->
+              <video id="video" autoplay playsinline muted></video>
             </div>
             <p class="scan-status" id="scan-status" role="status" aria-live="polite">
               Starting camera…
@@ -47,16 +50,8 @@ const subject = authenticate(Astro.request);
               Enter the code instead
             </button>
           </div>
-
-          <form
-            id="lookup"
-            class:list={["step", !scannedDevice && "hidden"]}
-            data-device={scannedDevice}
-          >
-            <div id="scanned-banner" class="callout hidden">
-              <span class="callout-label">Signing in</span>
-              <strong class="callout-client" id="scanned-name">A device</strong>
-            </div>
+          <form id="lookup" class="step hidden">
+            <p class="lead">Enter the code shown on the other device.</p>
 
             <p class="lead">Enter the code shown on the other device.</p>
             <label class="field">
@@ -129,8 +124,6 @@ const subject = authenticate(Astro.request);
     const scanner = $(`scanner`);
     const video = $(`video`) as HTMLVideoElement;
     const scanStatus = $(`scan-status`);
-    const scannedBanner = $(`scanned-banner`);
-    const scannedName = $(`scanned-name`);
 
     const show = (el: HTMLElement, on: boolean) =>
       el.classList.toggle(`hidden`, !on);
@@ -323,6 +316,25 @@ const subject = authenticate(Astro.request);
 
       try {
         await scannerInstance.start();
+
+        // `start()` resolving only means the stream was ATTACHED. iOS Safari
+        // will not begin playback of a srcObject stream on its own, and on
+        // Safari a paused element yields no frames — permission granted,
+        // preview black, nothing ever decodes.
+        //
+        // Deliberately no `videoWidth === 0` guard afterwards: qr-scanner
+        // samples the MediaStreamTrack rather than the element, so Chromium
+        // decodes fine from a paused, zero-size video. Treating that as
+        // failure would break a scanner that works.
+        if (video.paused) {
+          try {
+            await video.play();
+          } catch {
+            // Autoplay refused. The track may still be readable, so let the
+            // scanner try rather than dead-ending on a preview problem.
+          }
+        }
+
         scanStatus.textContent = `Looking for a code…`;
       } catch {
         // Denied, unavailable, or an insecure context — getUserMedia needs
@@ -332,29 +344,9 @@ const subject = authenticate(Astro.request);
       }
     };
 
-    const scannedDevice = lookup.dataset.device ?? ``;
-
-    if (scannedDevice) {
-      // Scanned this app's QR, which carries WHICH device — not the code. Name
-      // it so the user can recognise what they are approving, then let them
-      // type the code from that device's own screen.
-      void (async () => {
-        const res = await fetch(
-          `/api/device-info?device=${encodeURIComponent(scannedDevice)}`
-        );
-        if (!res.ok) {
-          outcome.textContent = `That device is no longer waiting to sign in.`;
-          outcome.dataset.tone = `bad`;
-          show(outcome, true);
-          return;
-        }
-        const info = (await res.json()) as { client_id?: string };
-        scannedName.textContent = info.client_id ?? `A device`;
-        show(scannedBanner, true);
-        codeInput.focus();
-      })();
-    } else if (codeInput.value) {
-      // The RFC-default QR shape, where the code itself arrives in the URL.
+    // Arrived with the code already in the URL — a scanned QR or a universal
+    // link. Nothing left to scan, so skip the camera.
+    if (codeInput.value) {
       void client.submitCode(codeInput.value);
     } else {
       void startCamera();

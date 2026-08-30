@@ -1,11 +1,7 @@
 ---
 import { renderDeviceQr } from "@saeris/hanko";
 import Base from "../layouts/Base.astro";
-import {
-  originOf,
-  publicDeviceId,
-  resumeOrCreateGrant
-} from "../lib/hanko.js";
+import { originOf, resumeOrCreateGrant } from "../lib/hanko.js";
 
 // The origin the browser actually reached. A grant created here is only
 // reachable through the SAME origin — the store is shared, but the QR and the
@@ -31,13 +27,7 @@ const grant = isLocal
     await resumeOrCreateGrant({
       cookies: Astro.cookies,
       clientId: `demo-tv`,
-      verificationUri: `${origin}/link`,
-      // The QR carries WHICH device is asking, not the code that approves it.
-      // A photograph of the screen then reveals only an identifier; approving
-      // still needs the code read off that same screen. Two independent facts,
-      // neither sufficient alone.
-      buildQrTarget: async (deviceCode) =>
-        `${origin}/link?device=${await publicDeviceId(deviceCode)}`
+      verificationUri: `${origin}/link`
     });
 
 const qr =
@@ -168,9 +158,14 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
         if (res.status === 401) {
           finish(
             `Signed out`,
-            `This device's access was revoked. Reload to sign in again.`,
+            `This device's access was revoked. Getting a new code…`,
             `bad`
           );
+          // Back to a fresh code, the way signing out of any app returns you
+          // to its sign-in screen. Delayed so the reason is readable first —
+          // an instant reload just looks like the screen glitched. A TV has no
+          // pointer, so an automatic return is the only affordance that works.
+          setTimeout(() => globalThis.location.reload(), 4000);
           return;
         }
       } catch {

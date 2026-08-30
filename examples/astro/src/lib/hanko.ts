@@ -120,21 +120,11 @@ export const originOf = (request: Request, url: URL): string => {
 export const resumeOrCreateGrant = async ({
   cookies,
   clientId,
-  verificationUri,
-  buildQrTarget
+  verificationUri
 }: {
   cookies: AstroCookies;
   clientId: string;
   verificationUri: string;
-  /**
-   * What the QR encodes, if not the spec's default.
-   *
-   * RFC 8628 defines `verification_uri_complete` as carrying the user code, so
-   * the library emits that. This app overrides it to carry a device identifier
-   * instead — see the call site for why — which is a host policy choice rather
-   * than a protocol one.
-   */
-  buildQrTarget?: (deviceCode: string) => Promise<string>;
 }): Promise<DeviceAuthorizationResponse> => {
   // Validated rather than asserted: a cookie is client-controlled, and a
   // half-shaped value here would fail deep inside the render instead of at the
@@ -150,25 +140,7 @@ export const resumeOrCreateGrant = async ({
     if (live?.status === `pending`) return existing;
   }
 
-  const issued = await hanko.requestAuthorization({
-    clientId,
-    verificationUri
-  });
-  let grant = issued;
-
-  if (buildQrTarget !== undefined) {
-    grant = {
-      ...issued,
-      verification_uri_complete: await buildQrTarget(issued.device_code)
-    };
-    // Remembered so a scan of that QR can be resolved back to this grant.
-    indexDevice(
-      await publicDeviceId(issued.device_code),
-      issued.user_code,
-      Date.now() + issued.expires_in * 1000
-    );
-  }
-
+  const grant = await hanko.requestAuthorization({ clientId, verificationUri });
   cookies.set(GRANT_COOKIE, JSON.stringify(grant), {
     path: `/`,
     httpOnly: true,
@@ -233,63 +205,4 @@ export const sameOrigin = (request: Request): boolean => {
 
   const expected = originOf(request, new URL(request.url));
   return origin === expected;
-};
-
-/**
- * Public handle for a grant, safe to put in a QR.
- *
- * The `device_code` is the bearer credential — 256 bits, known only to the
- * server and the device that requested it. Anyone who reads it can redeem the
- * grant, so it must never appear in something a stranger can photograph.
- *
- * This is a SHA-256 of it, truncated. Same identity, none of the authority:
- * it says which pending sign-in a scan refers to, and cannot be used to
- * complete one. Truncation is fine because the value only has to be unique
- * among the handful of grants live at once, and it is not a secret.
- */
-export const publicDeviceId = async (deviceCode: string): Promise<string> => {
-  const digest = await crypto.subtle.digest(
-    `SHA-256`,
-    new TextEncoder().encode(deviceCode)
-  );
-  return [...new Uint8Array(digest)]
-    .slice(0, 8)
-    .map((b) => b.toString(16).padStart(2, `0`))
-    .join(``);
-};
-
-/**
- * Public device id → user code, for scanned QRs.
- *
- * Kept HERE rather than in the library on purpose: enumerating pending grants
- * is precisely what `DeviceGrantStore` withholds — every lookup takes a code
- * the caller must already hold. Mapping a scan back to a grant is a host
- * concern, so the index lives with the host.
- *
- * Entries are dropped when the grant settles or ages out, so this cannot grow
- * unbounded.
- */
-const deviceIndex = new Map<string, { userCode: string; expiresAt: number }>();
-
-export const indexDevice = (
-  deviceId: string,
-  userCode: string,
-  expiresAt: number
-): void => {
-  const now = Date.now();
-  for (const [id, entry] of deviceIndex) {
-    if (entry.expiresAt <= now) deviceIndex.delete(id);
-  }
-  deviceIndex.set(deviceId, { userCode, expiresAt });
-};
-
-/** Resolve a scanned device id, or undefined if it is unknown or stale. */
-export const userCodeForDevice = (deviceId: string): string | undefined => {
-  const entry = deviceIndex.get(deviceId);
-  if (entry === undefined) return undefined;
-  if (entry.expiresAt <= Date.now()) {
-    deviceIndex.delete(deviceId);
-    return undefined;
-  }
-  return entry.userCode;
 };
