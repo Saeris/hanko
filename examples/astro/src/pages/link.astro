@@ -29,11 +29,23 @@ const subject = authenticate(Astro.request);
       ) : (
         <section class="card" id="card" data-subject={subject}>
           <h1>Approve sign-in</h1>
-          <p class="lead" id="lead">
-            Enter the code shown on the other device.
-          </p>
 
-          <form id="lookup" class:list={["step", prefilled && "hidden"]}>
+          <div id="scanner" class:list={["step", prefilled && "hidden"]}>
+            <p class="lead">Point your camera at the code on the other device.</p>
+            <div class="viewfinder">
+              <video id="video" playsinline muted></video>
+              <div class="reticle" aria-hidden="true"></div>
+            </div>
+            <p class="scan-status" id="scan-status" role="status" aria-live="polite">
+              Starting camera…
+            </p>
+            <button class="btn ghost" type="button" id="use-code">
+              Enter the code instead
+            </button>
+          </div>
+
+          <form id="lookup" class="step hidden">
+            <p class="lead">Enter the code shown on the other device.</p>
             <label class="field">
               <span>Code from the screen</span>
               <input
@@ -103,6 +115,8 @@ const subject = authenticate(Astro.request);
     ApprovalClient,
     codeEntryChallenge,
     consumeLaunchTarget,
+    createBarcodeDetectorScanner,
+    hasNativeBarcodeDetector,
     parseApprovalLink
   } from "@saeris/hanko/approve";
 
@@ -115,6 +129,9 @@ const subject = authenticate(Astro.request);
     const approveBtn = $(`approve`) as HTMLButtonElement;
     const error = $(`error`);
     const outcome = $(`outcome`);
+    const scanner = $(`scanner`);
+    const video = $(`video`) as HTMLVideoElement;
+    const scanStatus = $(`scan-status`);
 
     const show = (el: HTMLElement, on: boolean) =>
       el.classList.toggle(`hidden`, !on);
@@ -122,6 +139,24 @@ const subject = authenticate(Astro.request);
     /** Insert the separator every four characters, to match the TV's display. */
     const groupCode = (code: string) =>
       (code.match(/.{1,4}/gu) ?? [code]).join(`-`);
+
+    let stream: MediaStream | null = null;
+    let scanning = false;
+
+    /** Release the camera. Leaving it live drains the battery and keeps the
+        recording indicator on, which reads as the page spying. */
+    const stopCamera = (): void => {
+      scanning = false;
+      for (const track of stream?.getTracks() ?? []) track.stop();
+      stream = null;
+    };
+
+    const showCodeEntry = (): void => {
+      stopCamera();
+      show(scanner, false);
+      show(lookup, true);
+      codeInput.focus();
+    };
 
     const client = new ApprovalClient({
       // The library never assumes a transport — the host wires its own fetches.
@@ -152,7 +187,12 @@ const subject = authenticate(Astro.request);
       challenge: codeEntryChallenge(),
       hooks: {
         onTransition: (_from, to) => {
-          show($(`lookup`), to === `idle` || to === `resolving`);
+          // Past `resolving` the camera has done its job; releasing it here
+          // rather than at the end means it is off during confirmation, when
+          // the user is reading rather than pointing.
+          if (to !== `idle` && to !== `scanning`) stopCamera();
+
+          show(scanner, to === `idle` || to === `scanning`);
           show($(`confirm`), to === `confirming`);
 
           if (to === `confirming` && client.grant) {
@@ -168,7 +208,11 @@ const subject = authenticate(Astro.request);
             outcome.textContent = `That code is not valid, or it has expired.`;
             outcome.dataset.tone = `bad`;
             show(outcome, true);
-            show($(`lookup`), true);
+            // Falls back to typing rather than back to the camera: a scan that
+            // resolved to nothing will keep resolving to nothing, and pointing
+            // the camera again is a worse loop than reading the code off.
+            showCodeEntry();
+            client.reset();
           }
         },
         onChallengeFailed: (_reason, attempts) => {
@@ -219,8 +263,74 @@ const subject = authenticate(Astro.request);
       if (link && client.state === `idle`) void client.submitCode(link.userCode);
     });
 
+    $(`use-code`).addEventListener(`click`, showCodeEntry);
+
+    /**
+     * Open the camera and hand frames to the library's scanner.
+     *
+     * `facingMode: environment` asks for the rear camera — the front one is
+     * pointed at the user, not at the screen they are trying to scan.
+     */
+    const startCamera = async (): Promise<void> => {
+      if (!hasNativeBarcodeDetector()) {
+        scanStatus.textContent = `This browser cannot scan. Enter the code instead.`;
+        showCodeEntry();
+        return;
+      }
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: `environment` }
+        });
+      } catch {
+        // Denied, unavailable, or an insecure context — getUserMedia needs
+        // HTTPS. Typing always works, so fall through rather than dead-end.
+        scanStatus.textContent = `No camera access. Enter the code instead.`;
+        showCodeEntry();
+        return;
+      }
+
+      video.srcObject = stream;
+      await video.play();
+      scanStatus.textContent = `Looking for a code…`;
+
+      const detector = createBarcodeDetectorScanner();
+      scanning = true;
+
+      const tick = async (): Promise<void> => {
+        if (!scanning) return;
+        try {
+          const found = await detector.detect(video);
+          for (const { rawValue } of found) {
+            const link = parseApprovalLink(rawValue);
+            if (link) {
+              scanning = false;
+              await client.submitCode(link.userCode);
+              return;
+            }
+          }
+        } catch {
+          // A frame the detector could not read. Normal while focusing.
+        }
+        // rAF rather than a fixed interval: it pauses when the tab is hidden,
+        // which is exactly when scanning is pointless and battery is not.
+        requestAnimationFrame(() => void tick());
+      };
+
+      void tick();
+    };
+
     // Arrived with a code already in the URL — scanned QR or universal link.
-    if (codeInput.value) void client.submitCode(codeInput.value);
+    // No camera needed in that case; the code is already in hand.
+    if (codeInput.value) {
+      void client.submitCode(codeInput.value);
+    } else {
+      void startCamera();
+    }
+
+    // Releases the camera when the page goes away. Without this the indicator
+    // can linger after a back-navigation.
+    window.addEventListener(`pagehide`, stopCamera);
   }
 </script>
 
@@ -262,6 +372,48 @@ const subject = authenticate(Astro.request);
 
   .hidden {
     display: none;
+  }
+
+  .viewfinder {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--ground);
+    border: 1px solid var(--line);
+  }
+
+  .viewfinder video {
+    width: 100%;
+    height: 100%;
+    /* Cover rather than contain: a letterboxed preview wastes the area the
+       user is trying to aim, and the QR only needs to be somewhere in frame. */
+    object-fit: cover;
+  }
+
+  /* Aiming guide. Corners only — a full frame implies the code must fill it
+     exactly, which it does not. */
+  .reticle {
+    position: absolute;
+    inset: 18%;
+    border-radius: 8px;
+    background:
+      linear-gradient(var(--accent), var(--accent)) top left / 1.25rem 2px,
+      linear-gradient(var(--accent), var(--accent)) top left / 2px 1.25rem,
+      linear-gradient(var(--accent), var(--accent)) top right / 1.25rem 2px,
+      linear-gradient(var(--accent), var(--accent)) top right / 2px 1.25rem,
+      linear-gradient(var(--accent), var(--accent)) bottom left / 1.25rem 2px,
+      linear-gradient(var(--accent), var(--accent)) bottom left / 2px 1.25rem,
+      linear-gradient(var(--accent), var(--accent)) bottom right / 1.25rem 2px,
+      linear-gradient(var(--accent), var(--accent)) bottom right / 2px 1.25rem;
+    background-repeat: no-repeat;
+  }
+
+  .scan-status {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--ink-dim);
+    text-align: center;
   }
 
   .callout {

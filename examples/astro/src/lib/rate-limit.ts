@@ -7,7 +7,7 @@
  * perfectly safe at five attempts per window. Plex ships a code this short for
  * the same reason: the entropy budget moved from the code to the limiter.
  *
- * Counted per (IP, code) pair rather than per IP alone: a taproom where every
+ * Counted per (IP, code) pair rather than per IP alone: a venue where every
  * device shares one NAT address would otherwise lock out real users the moment
  * one of them fat-fingered a code.
  *

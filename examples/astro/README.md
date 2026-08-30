@@ -135,14 +135,19 @@ and may need the URL opened from a QR rather than typed.
 
 ## Walking the flow
 
-1. **Phone:** open `/signin` and enter anything. Whatever you enter becomes the
-   identity the other device inherits.
-2. **Second screen:** open `/tv` — a browser tab, a Pi, a Fire Stick. It shows
-   a code and a QR and starts polling.
-3. **Phone:** scan the QR, or open `/link` and type the code.
+1. **Phone:** open `/signin` and find your ATProto handle. It resolves against
+   the public API and carries the DID — not the handle — as the identity the
+   other device inherits.
+2. **Second screen:** open `/tv` — a browser tab, a Pi, a Fire Stick. **Use the
+   same tunnel URL**, not `localhost`. It shows a code and a QR and polls.
+3. **Phone:** the approval screen opens a camera first. Point it at the QR, or
+   tap "enter the code instead".
 4. **Phone:** re-enter the code to confirm you can see the screen you are
    authorizing, then approve.
 5. **Second screen:** the next poll picks it up and shows who it signed in as.
+
+Reloading `/tv` keeps the same code — the grant is bound to that browser, so a
+refresh does not invalidate a code someone is halfway through typing.
 
 Every transition is logged in the terminal running the dev server, so the flow
 can be followed across three devices without attaching a debugger to any.
@@ -175,7 +180,13 @@ modest hardware.
 - **Placeholder app IDs** in the association files. Replace them with a real
   `<TEAM_ID>.<BUNDLE_ID>` and Play-signed fingerprint and the same QR opens a
   native app instead of this page — no change to the payload.
-- **`authenticate` reads a cookie** set by a fake sign-in page. In a real app
-  this reads your session, and whatever it returns is what the TV becomes.
+- **Sign-in resolves a real handle but fakes the session.** `/signin` calls the
+  public ATProto API for typeahead and handle resolution, so the DID it carries
+  is genuinely yours — but it never proves you own it. A real app runs the
+  ATProto OAuth flow against your PDS; this one just sets a cookie, which is
+  enough to exercise the hand-off honestly without making the demo about OAuth.
+- **The grant is bound to a cookie**, so reloading `/tv` keeps the same code.
+  A real deployment would key it to whatever identifies the screen — a device
+  registration, a kiosk id — rather than a browser cookie.
 
 [portless]: https://github.com/vercel-labs/portless

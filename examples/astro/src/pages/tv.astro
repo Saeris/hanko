@@ -1,7 +1,7 @@
 ---
 import { renderDeviceQr } from "@saeris/hanko";
 import Base from "../layouts/Base.astro";
-import { hanko, originOf } from "../lib/hanko.js";
+import { originOf, resumeOrCreateGrant } from "../lib/hanko.js";
 
 // The origin the browser actually reached. A grant created here is only
 // reachable through the SAME origin — the store is shared, but the QR and the
@@ -13,13 +13,20 @@ const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/u.test(origin);
 // `localhost` while the phone is on a tunnel produces a QR the phone cannot
 // reach AND a code stored against an origin its requests never carry — both
 // fail silently, which is the worst way for a sign-in screen to fail.
+//
+// Reused across reloads rather than minted per render. A page render must not
+// be a side effect: without this, refreshing the screen — or opening it in a
+// second tab — silently replaces the code someone is halfway through typing,
+// and the old one keeps working, so two live codes disagree about which is
+// "the" code.
 const grant = isLocal
   ? null
   : // Started server-side so the screen paints with a code already on it.
     // Doing this in the browser would show an empty panel for a round trip,
     // which on a TV reads as the app having failed to load.
-    await hanko.requestAuthorization({
-      clientId: `taproom-tv`,
+    await resumeOrCreateGrant({
+      cookies: Astro.cookies,
+      clientId: `demo-tv`,
       verificationUri: `${origin}/link`
     });
 
@@ -58,7 +65,7 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
         </section>
       ) : (
         <>
-          <h1>Sign in to the taproom board</h1>
+          <h1>Sign in to this device</h1>
 
           <div class="paths">
             <section class="path">

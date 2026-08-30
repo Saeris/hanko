@@ -1,21 +1,29 @@
 ---
 import Base from "../layouts/Base.astro";
 
-// Stands in for the host app's real sign-in. The demo only needs SOME identity
-// on the phone, because that identity is what the TV inherits — the point being
-// exercised is the hand-off, not the authentication.
+// Where to go once signed in. Carried through so a phone that scanned a QR
+// lands back on the approval screen with its code intact.
 const next = Astro.url.searchParams.get(`next`) ?? `/link`;
 
 if (Astro.request.method === `POST`) {
   const form = await Astro.request.formData();
-  const who = String(form.get(`who`) ?? ``).trim();
-  if (who) {
-    Astro.cookies.set(`demo_session`, who, {
+  const did = String(form.get(`did`) ?? ``).trim();
+  const handle = String(form.get(`handle`) ?? ``).trim();
+
+  if (did.length > 0) {
+    // Handles are mutable aliases; the DID is the identity that outlives them.
+    // The handle is stored only for display — the DID is what the device
+    // actually inherits.
+    Astro.cookies.set(`demo_session`, handle.length > 0 ? handle : did, {
       path: `/`,
       httpOnly: true,
       sameSite: `lax`,
-      // Portless terminates TLS in front of this, so the cookie is safe to mark
-      // secure — and the camera needs that secure context anyway.
+      secure: Astro.url.protocol === `https:`
+    });
+    Astro.cookies.set(`demo_did`, did, {
+      path: `/`,
+      httpOnly: true,
+      sameSite: `lax`,
       secure: Astro.url.protocol === `https:`
     });
     return Astro.redirect(String(form.get(`next`) ?? `/link`));
@@ -25,21 +33,203 @@ if (Astro.request.method === `POST`) {
 
 <Base title="Sign in — hanko" surface="phone">
   <main>
-    <form class="card" method="POST">
+    <form class="card" method="POST" id="form">
       <h1>Sign in</h1>
       <p class="lead">
-        A stand-in for your real auth. Whatever you enter becomes the identity
-        the other device is signed in as.
+        Find your ATProto account. This resolves a real handle to its DID — the
+        identity the other device will inherit.
       </p>
-      <label class="field">
-        <span>Who are you?</span>
-        <input name="who" placeholder="did:plc:example" required autofocus />
-      </label>
+
+      <div class="field">
+        <label for="handle">Handle</label>
+        <div class="combo">
+          <input
+            id="handle"
+            name="handle"
+            placeholder="alice.bsky.social"
+            role="combobox"
+            aria-expanded="false"
+            aria-autocomplete="list"
+            aria-controls="suggestions"
+            autocomplete="username"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            inputmode="url"
+            enterkeyhint="go"
+            required
+          />
+          <ul class="suggestions" id="suggestions" role="listbox" hidden></ul>
+        </div>
+      </div>
+
+      <p class="hint" id="hint">Type at least two characters.</p>
+
+      <input type="hidden" name="did" id="did" />
       <input type="hidden" name="next" value={next} />
+      <!-- Deliberately NOT disabled without a DID. A disabled submitter means
+           the form never fires a submit event, which would block the very
+           handler that resolves a typed handle into a DID. -->
       <button class="btn" type="submit">Continue</button>
     </form>
   </main>
 </Base>
+
+<script>
+  const form = document.getElementById(`form`) as HTMLFormElement;
+  const input = document.getElementById(`handle`) as HTMLInputElement;
+  const list = document.getElementById(`suggestions`) as HTMLUListElement;
+  const didField = document.getElementById(`did`) as HTMLInputElement;
+  const hint = document.getElementById(`hint`);
+
+  interface Actor {
+    did: string;
+    handle: string;
+    displayName?: string;
+    avatar?: string;
+  }
+
+  let active = -1;
+  let actors: Actor[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearSelection = (): void => {
+    didField.value = ``;
+  };
+
+  const close = (): void => {
+    list.hidden = true;
+    input.setAttribute(`aria-expanded`, `false`);
+    active = -1;
+  };
+
+  const choose = (actor: Actor): void => {
+    input.value = actor.handle;
+    didField.value = actor.did;
+
+    if (hint) hint.textContent = actor.did;
+    close();
+  };
+
+  const render = (): void => {
+    list.replaceChildren();
+    actors.forEach((actor, index) => {
+      const item = document.createElement(`li`);
+      item.role = `option`;
+      item.id = `suggestion-${index}`;
+      item.ariaSelected = String(index === active);
+      item.className = `suggestion`;
+
+      if (actor.avatar !== undefined) {
+        const img = document.createElement(`img`);
+        img.src = actor.avatar;
+        img.alt = ``;
+        img.loading = `lazy`;
+        item.append(img);
+      }
+
+      const text = document.createElement(`span`);
+      const name = document.createElement(`strong`);
+      name.textContent = actor.displayName ?? actor.handle;
+      const handle = document.createElement(`small`);
+      handle.textContent = actor.handle;
+      text.append(name, handle);
+      item.append(text);
+
+      // `mousedown` rather than `click`: the input's blur fires first on a tap
+      // and would close the list before a click ever landed.
+      item.addEventListener(`mousedown`, (event) => {
+        event.preventDefault();
+        choose(actor);
+      });
+
+      list.append(item);
+    });
+
+    list.hidden = actors.length === 0;
+    input.setAttribute(`aria-expanded`, String(actors.length > 0));
+  };
+
+  const search = async (query: string): Promise<void> => {
+    try {
+      const res = await fetch(
+        `https://public.api.bsky.app/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}&limit=6`
+      );
+      if (!res.ok) return;
+      const body = (await res.json()) as { actors?: Actor[] };
+      actors = body.actors ?? [];
+      active = -1;
+      render();
+    } catch {
+      // Offline, or the public API is down. A full handle can still be typed
+      // and resolved on submit, so this is not worth interrupting anyone over.
+    }
+  };
+
+  input.addEventListener(`input`, () => {
+    // Any edit invalidates a previously chosen DID — otherwise submitting
+    // would send a DID that no longer matches the visible handle.
+    clearSelection();
+    if (hint) hint.textContent = `Type at least two characters.`;
+
+    const query = input.value.trim();
+    clearTimeout(timer);
+    if (query.length < 2) {
+      actors = [];
+      close();
+      return;
+    }
+    // Debounced: this hits a public API, and a request per keystroke is both
+    // slow on mobile data and rude to someone else's infrastructure.
+    timer = setTimeout(() => void search(query), 200);
+  });
+
+  input.addEventListener(`keydown`, (event) => {
+    if (list.hidden || actors.length === 0) return;
+
+    if (event.key === `ArrowDown` || event.key === `ArrowUp`) {
+      event.preventDefault();
+      const delta = event.key === `ArrowDown` ? 1 : -1;
+      active = (active + delta + actors.length) % actors.length;
+      input.setAttribute(`aria-activedescendant`, `suggestion-${active}`);
+      render();
+    } else if (event.key === `Enter` && active >= 0) {
+      event.preventDefault();
+      choose(actors[active]!);
+    } else if (event.key === `Escape`) {
+      close();
+    }
+  });
+
+  input.addEventListener(`blur`, () => setTimeout(close, 120));
+
+  // Typed in full without picking a suggestion — resolve it directly rather
+  // than forcing a selection from the list.
+  form.addEventListener(`submit`, (event) => {
+    if (didField.value.length > 0) return;
+
+    event.preventDefault();
+    void (async () => {
+      const handle = input.value.trim().replace(/^@/u, ``);
+      try {
+        const res = await fetch(
+          `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`
+        );
+        if (!res.ok) {
+          if (hint) hint.textContent = `No account found for that handle.`;
+          return;
+        }
+        const body = (await res.json()) as { did: string };
+        didField.value = body.did;
+        // `requestSubmit` rather than `submit`: the latter is shadowed by any
+        // form control named or id'd "submit", and skips validation besides.
+        form.requestSubmit();
+      } catch {
+        if (hint) hint.textContent = `Could not reach the ATProto API.`;
+      }
+    })();
+  });
+</script>
 
 <style>
   main {
@@ -73,14 +263,89 @@ if (Astro.request.method === `POST`) {
     font-size: 0.85rem;
     color: var(--ink-dim);
   }
+  .combo {
+    position: relative;
+  }
   input {
+    /* 16px minimum: iOS zooms the viewport on focus for anything smaller,
+       which yanks the layout sideways mid-entry. */
     font: inherit;
     font-size: 1.05rem;
+    width: 100%;
     padding: 0.75rem 0.9rem;
     border-radius: 10px;
     border: 1px solid var(--line);
     background: var(--ground);
     color: var(--ink);
+  }
+  /* An explicit `display` beats the `hidden` attribute's default
+     `display: none`, so without this the list stays laid out and keeps
+     intercepting taps on the button beneath it — invisible, but not gone. */
+  .suggestions[hidden] {
+    display: none;
+  }
+
+  .suggestions {
+    position: absolute;
+    inset-inline: 0;
+    top: calc(100% + 0.35rem);
+    z-index: 2;
+    margin: 0;
+    padding: 0.25rem;
+    list-style: none;
+    display: grid;
+    gap: 0.15rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--ground);
+    max-height: 15rem;
+    overflow-y: auto;
+  }
+  /* `:global` because these rows are built with `document.createElement`, so
+     they never receive Astro's scoping attribute and scoped rules cannot reach
+     them — the avatar renders at its intrinsic size and blows out the list. */
+  .suggestions :global(.suggestion) {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .suggestions :global(.suggestion[aria-selected="true"]),
+  .suggestions :global(.suggestion:hover) {
+    background: var(--ground-lift);
+  }
+  .suggestions :global(.suggestion img) {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .suggestions :global(.suggestion span) {
+    display: grid;
+    min-width: 0;
+  }
+  .suggestions :global(.suggestion strong) {
+    font-size: 0.95rem;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .suggestions :global(.suggestion small) {
+    font-size: 0.8rem;
+    color: var(--ink-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hint {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--ink-dim);
+    word-break: break-all;
   }
   .btn {
     min-height: 44px;
@@ -89,5 +354,8 @@ if (Astro.request.method === `POST`) {
     background: var(--accent);
     color: #2a1c05;
     font-weight: 600;
+  }
+  .btn:disabled {
+    opacity: 0.45;
   }
 </style>

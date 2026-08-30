@@ -10,7 +10,12 @@
  */
 
 import { HankoServer } from "@saeris/hanko";
+import type { DeviceAuthorizationResponse } from "@saeris/hanko";
+import type { AstroCookies } from "astro";
 import { MemoryDeviceGrantStore } from "@saeris/hanko/stores/memory";
+
+/** Cookie holding this browser's in-flight grant. */
+const GRANT_COOKIE = `hanko_demo_grant`;
 
 /**
  * Fallback origin, used only when a request carries no forwarded headers.
@@ -94,4 +99,74 @@ export const originOf = (request: Request, url: URL): string => {
 
   const proto = request.headers.get(`x-forwarded-proto`)?.split(`,`)[0]?.trim();
   return `${proto === undefined || proto.length === 0 ? `https` : proto}://${host}`;
+};
+
+/**
+ * Reuse this browser's grant across reloads, or create one.
+ *
+ * A page render must not be a side effect. Minting a grant per request means a
+ * refresh — or a second tab, or a phone opening the same screen — silently
+ * replaces the code someone is halfway through typing, while the old grant
+ * stays live. Two valid codes then disagree about which is "the" code, and the
+ * phone reports the one on the TV as invalid.
+ *
+ * Keyed by a cookie because that is what identifies a BROWSER, which is what a
+ * TV screen is. Falls through to a new grant once the old one is spent or
+ * expired, so a completed sign-in does not pin a dead code forever.
+ */
+export const resumeOrCreateGrant = async ({
+  cookies,
+  clientId,
+  verificationUri
+}: {
+  cookies: AstroCookies;
+  clientId: string;
+  verificationUri: string;
+}): Promise<DeviceAuthorizationResponse> => {
+  // Validated rather than asserted: a cookie is client-controlled, and a
+  // half-shaped value here would fail deep inside the render instead of at the
+  // boundary. Nothing security-sensitive rests on it — the store is still the
+  // authority on whether the grant is live — but a crash is a worse outcome
+  // than minting a fresh code.
+  const existing = readGrantCookie(cookies.get(GRANT_COOKIE)?.value);
+
+  if (existing !== undefined) {
+    // Trust the store, not the cookie: the grant may have been approved,
+    // denied, or aged out since this browser last loaded the page.
+    const live = await hanko.lookupByUserCode(existing.user_code);
+    if (live?.status === `pending`) return existing;
+  }
+
+  const grant = await hanko.requestAuthorization({ clientId, verificationUri });
+  cookies.set(GRANT_COOKIE, JSON.stringify(grant), {
+    path: `/`,
+    httpOnly: true,
+    sameSite: `lax`,
+    // Matches the grant's own lifetime. A cookie outliving its grant would
+    // just mean one wasted lookup, but expiring first would mint a duplicate.
+    maxAge: grant.expires_in
+  });
+  return grant;
+};
+
+const isGrant = (value: unknown): value is DeviceAuthorizationResponse =>
+  typeof value === `object` &&
+  value !== null &&
+  `device_code` in value &&
+  typeof value.device_code === `string` &&
+  `user_code` in value &&
+  typeof value.user_code === `string`;
+
+/** Parse the grant cookie, tolerating anything that is not a grant. */
+const readGrantCookie = (
+  raw: string | undefined
+): DeviceAuthorizationResponse | undefined => {
+  if (raw === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isGrant(parsed) ? parsed : undefined;
+  } catch {
+    // Not JSON at all. Treated the same as absent.
+    return undefined;
+  }
 };
