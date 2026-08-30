@@ -1,0 +1,109 @@
+{
+  "name": "@saeris/hanko",
+  "version": "0.0.0",
+  "description": "QR-assisted device sign-in (OAuth 2.0 Device Authorization Grant, RFC 8628) for TVs, kiosks, and anything without a keyboard",
+  "keywords": [
+    "oauth",
+    "oauth2",
+    "rfc8628",
+    "device-authorization",
+    "device-code",
+    "device-flow",
+    "qr-code",
+    "sign-in",
+    "tv",
+    "kiosk"
+  ],
+  "homepage": "https://github.com/Saeris/hanko#readme",
+  "bugs": "https://github.com/Saeris/hanko/issues",
+  "license": "MIT",
+  "author": "Drake Costa <drake@saeris.gg> (https://saeris.gg)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Saeris/hanko.git"
+  },
+  "files": [
+    "dist/**/*"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "import": {
+        "development": "./src/index.ts",
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "./client": {
+      "import": {
+        "development": "./src/client/index.ts",
+        "types": "./dist/client/index.d.mts",
+        "default": "./dist/client/index.mjs"
+      }
+    },
+    "./approve": {
+      "import": {
+        "development": "./src/approve/index.ts",
+        "types": "./dist/approve/index.d.mts",
+        "default": "./dist/approve/index.mjs"
+      }
+    },
+    "./handlers": {
+      "import": {
+        "development": "./src/handlers.ts",
+        "types": "./dist/handlers.d.mts",
+        "default": "./dist/handlers.mjs"
+      }
+    },
+    "./stores/memory": {
+      "import": {
+        "development": "./src/stores/memory.ts",
+        "types": "./dist/stores/memory.d.mts",
+        "default": "./dist/stores/memory.mjs"
+      }
+    },
+    "./stores/kv": {
+      "import": {
+        "development": "./src/stores/kv.ts",
+        "types": "./dist/stores/kv.d.mts",
+        "default": "./dist/stores/kv.mjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "ci": "vp check && vp test",
+    "build": "vp pack",
+    "check": "vp check",
+    "format": "vp check --fix",
+    "test": "vp test --fileParallelism"
+  },
+  "dependencies": {
+    "etiket": "^0.12.0"
+  },
+  "peerDependencies": {
+    "barcode-detector": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "barcode-detector": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@saeris/configs": "1.6.1",
+    "@types/node": "^25.9.1",
+    "@varlock/bumpy": "^1.7.0",
+    "typescript": "^6.0.3",
+    "vite-plus": "0.2.9",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "yarn@4.18.0"
+}
