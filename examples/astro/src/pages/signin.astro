@@ -1,0 +1,93 @@
+---
+import Base from "../layouts/Base.astro";
+
+// Stands in for the host app's real sign-in. The demo only needs SOME identity
+// on the phone, because that identity is what the TV inherits — the point being
+// exercised is the hand-off, not the authentication.
+const next = Astro.url.searchParams.get(`next`) ?? `/link`;
+
+if (Astro.request.method === `POST`) {
+  const form = await Astro.request.formData();
+  const who = String(form.get(`who`) ?? ``).trim();
+  if (who) {
+    Astro.cookies.set(`demo_session`, who, {
+      path: `/`,
+      httpOnly: true,
+      sameSite: `lax`,
+      // Portless terminates TLS in front of this, so the cookie is safe to mark
+      // secure — and the camera needs that secure context anyway.
+      secure: Astro.url.protocol === `https:`
+    });
+    return Astro.redirect(String(form.get(`next`) ?? `/link`));
+  }
+}
+---
+
+<Base title="Sign in — hanko" surface="phone">
+  <main>
+    <form class="card" method="POST">
+      <h1>Sign in</h1>
+      <p class="lead">
+        A stand-in for your real auth. Whatever you enter becomes the identity
+        the other device is signed in as.
+      </p>
+      <label class="field">
+        <span>Who are you?</span>
+        <input name="who" placeholder="did:plc:example" required autofocus />
+      </label>
+      <input type="hidden" name="next" value={next} />
+      <button class="btn" type="submit">Continue</button>
+    </form>
+  </main>
+</Base>
+
+<style>
+  main {
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+  }
+  .card {
+    width: min(100%, 26rem);
+    display: grid;
+    gap: 1rem;
+    padding: 1.75rem;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--ground-lift);
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.4rem;
+  }
+  .lead {
+    margin: 0;
+    color: var(--ink-dim);
+    line-height: 1.5;
+    font-size: 0.95rem;
+  }
+  .field {
+    display: grid;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--ink-dim);
+  }
+  input {
+    font: inherit;
+    font-size: 1.05rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--ground);
+    color: var(--ink);
+  }
+  .btn {
+    min-height: 44px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: #2a1c05;
+    font-weight: 600;
+  }
+</style>

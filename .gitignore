@@ -97,3 +97,6 @@ cypress/e2e/build
 # CPU profiles emitted by scripts/profile.mjs
 profiles/
 *.cpuprofile
+
+# Astro generated types and build output
+.astro/

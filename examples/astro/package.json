@@ -1,0 +1,23 @@
+{
+  "name": "@saeris/hanko-example-astro",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "portless": {
+    "name": "hanko",
+    "script": "dev"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@saeris/hanko": "workspace:*",
+    "astro": "~7.2.2"
+  },
+  "devDependencies": {
+    "@astrojs/node": "^11.1.0",
+    "@types/node": "^25.9.1"
+  }
+}

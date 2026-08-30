@@ -1,0 +1,274 @@
+---
+import { renderDeviceQr } from "@saeris/hanko";
+import Base from "../layouts/Base.astro";
+import { hanko } from "../lib/hanko.js";
+
+// Started server-side so the screen paints with a code already on it. Doing
+// this in the browser would show an empty panel for a round trip, which on a
+// TV reads as the app having failed to load.
+const grant = await hanko.requestAuthorization({ clientId: `taproom-tv` });
+
+const qr = renderDeviceQr(grant.verification_uri_complete!, {
+  size: 340,
+  // Light modules on the dark panel. Scanners need contrast, not a specific
+  // polarity — but the quiet zone has to match the modules, hence the dark
+  // background rather than a transparent one.
+  color: `#f0b429`,
+  background: `#160c1e`
+});
+
+// Shown without the scheme: the user is retyping this from across a room, and
+// "https://" is eight characters of noise they do not need.
+const typedUrl = grant.verification_uri.replace(/^https?:\/\//u, ``);
+---
+
+<Base title="Sign in — hanko" surface="tv">
+  <main>
+    <h1>Sign in to the taproom board</h1>
+
+    <div class="paths">
+      <section class="path">
+        <p class="lead">Visit this link in a browser</p>
+        <p class="url">{typedUrl}</p>
+        <p class="lead">and enter this code</p>
+        <p class="code" aria-label={`Code: ${grant.user_code.split("").join(" ")}`}>
+          {grant.user_code}
+        </p>
+      </section>
+
+      <div class="divider" aria-hidden="true"><span>OR</span></div>
+
+      <section class="path">
+        <p class="lead">Use the camera on your phone<br />to scan the QR code</p>
+        <div class="qr" set:html={qr} />
+      </section>
+    </div>
+
+    <p class="status" id="status" role="status" aria-live="polite">
+      Waiting for approval…
+    </p>
+  </main>
+</Base>
+
+<script
+  is:inline
+  define:vars={{
+    deviceCode: grant.device_code,
+    interval: grant.interval,
+    expiresIn: grant.expires_in
+  }}
+>
+  // Inline and dependency-free on purpose: this is the code that runs on a Fire
+  // Stick or a Pi, where every fetch costs and the JS engine is modest. The
+  // library's own client would work here too — this keeps the demo's TV bundle
+  // at zero bytes of framework.
+  const status = document.getElementById(`status`);
+  const deadline = Date.now() + expiresIn * 1000;
+  let wait = interval;
+
+  const set = (text, tone) => {
+    status.textContent = text;
+    status.dataset.tone = tone ?? ``;
+  };
+
+  const poll = async () => {
+    if (Date.now() >= deadline) {
+      set(`This code expired. Reload to get a new one.`, `bad`);
+      return;
+    }
+
+    let body;
+    try {
+      const res = await fetch(`/api/device/token`, {
+        method: `POST`,
+        headers: { "content-type": `application/x-www-form-urlencoded` },
+        body: new URLSearchParams({
+          grant_type: `urn:ietf:params:oauth:grant-type:device_code`,
+          device_code: deviceCode
+        })
+      });
+      body = await res.json();
+    } catch {
+      // Venue wifi drops. Exponential here, unlike slow_down's fixed +5s —
+      // congestion, not server policy.
+      wait = Math.min(wait * 2, 60);
+      setTimeout(poll, wait * 1000);
+      return;
+    }
+
+    switch (body.error) {
+      case `authorization_pending`:
+        setTimeout(poll, wait * 1000);
+        return;
+      case `slow_down`:
+        // Additive and permanent, per RFC 8628 §3.5. Never reset it.
+        wait += 5;
+        setTimeout(poll, wait * 1000);
+        return;
+      case `access_denied`:
+        set(`Sign-in was denied on your phone.`, `bad`);
+        return;
+      case `expired_token`:
+        set(`This code expired. Reload to get a new one.`, `bad`);
+        return;
+      case undefined:
+        // No error field means the grant was redeemed.
+        set(`Signed in as ${body.subject}`, `ok`);
+        document.body.dataset.signedIn = `true`;
+        return;
+      default:
+        // An unrecognized code is not evidence the user decided anything.
+        setTimeout(poll, wait * 1000);
+    }
+  };
+
+  setTimeout(poll, wait * 1000);
+</script>
+
+<style>
+  main {
+    /* Sized for the 1920x1080 the Fire Stick outputs, but in relative units so
+       it still reads on the 1280x720 a Pi might drive. */
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 2vh;
+    padding: 6vh 6vw;
+    place-items: center;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(1.75rem, 3.4vw, 3.5rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-align: center;
+  }
+
+  .paths {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: clamp(1.5rem, 4vw, 5rem);
+    width: min(100%, 1400px);
+  }
+
+  .path {
+    display: grid;
+    justify-items: center;
+    gap: 1.2vh;
+    /* Establishes the container the code sizes against, so it scales to its
+       own column rather than to the viewport — the column is what actually
+       constrains it. */
+    container-type: inline-size;
+  }
+
+  .lead {
+    margin: 0;
+    font-size: clamp(0.95rem, 1.35vw, 1.5rem);
+    color: var(--ink-dim);
+    text-align: center;
+    line-height: 1.45;
+  }
+
+  .url {
+    margin: 0;
+    font-size: clamp(1.2rem, 1.9vw, 2.1rem);
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .code {
+    margin: 0.5vh 0 0;
+    /* The whole point of the screen: legible from across a room. Tracked wide
+       so adjacent characters cannot be misread, and tabular so the string does
+       not reflow as digits change.
+
+       `nowrap` is not cosmetic: a wrapped code reads as TWO codes, and a user
+       could reasonably type only the first half. It must break the layout
+       before it breaks the string. Sized off the column (cqw) rather than the
+       viewport so it shrinks to fit that column instead of overflowing it. */
+    font-size: clamp(2rem, 13cqw, 5rem);
+    white-space: nowrap;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    text-indent: 0.14em;
+  }
+
+  .divider {
+    align-self: stretch;
+    display: grid;
+    place-items: center;
+    position: relative;
+    color: var(--ink-dim);
+    font-size: clamp(0.85rem, 1.1vw, 1.15rem);
+    letter-spacing: 0.1em;
+  }
+
+  .divider::before,
+  .divider::after {
+    content: "";
+    position: absolute;
+    width: 1px;
+    background: var(--line);
+    left: 50%;
+  }
+
+  .divider::before {
+    top: 0;
+    height: calc(50% - 1.6em);
+  }
+
+  .divider::after {
+    bottom: 0;
+    height: calc(50% - 1.6em);
+  }
+
+  .qr {
+    display: grid;
+    padding: clamp(0.6rem, 1vw, 1rem);
+    border-radius: 12px;
+    background: var(--ground);
+    /* The quiet zone is part of the symbol. Without the border the panel
+       gradient bleeds into it and scan rate drops at distance. */
+    border: 1px solid var(--line);
+  }
+
+  .qr :global(svg) {
+    display: block;
+    width: clamp(180px, 18vw, 340px);
+    height: auto;
+  }
+
+  .status {
+    margin: 0;
+    font-size: clamp(0.9rem, 1.2vw, 1.3rem);
+    color: var(--ink-dim);
+  }
+
+  .status[data-tone="ok"] {
+    color: var(--ok);
+    font-weight: 600;
+  }
+
+  .status[data-tone="bad"] {
+    color: var(--bad);
+    font-weight: 600;
+  }
+
+  /* A TV is landscape and fixed. This only fires when the demo is opened on a
+     narrow window, which is how it gets previewed on a laptop. */
+  @media (max-width: 800px) {
+    .paths {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+    }
+
+    .divider::before,
+    .divider::after {
+      display: none;
+    }
+  }
+</style>

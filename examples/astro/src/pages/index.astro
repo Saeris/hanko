@@ -1,0 +1,85 @@
+---
+import Base from "../layouts/Base.astro";
+import { ORIGIN } from "../lib/hanko.js";
+---
+
+<Base title="hanko demo" surface="phone">
+  <main>
+    <section class="card">
+      <h1>hanko demo</h1>
+      <p class="lead">
+        Three devices, one flow. Open each surface on the device that plays its
+        part.
+      </p>
+
+      <ol class="steps">
+        <li>
+          <a href="/signin">Sign in</a> on your phone. This identity is what the
+          other device inherits.
+        </li>
+        <li>
+          Open <a href="/tv">the TV screen</a> on a second device — a browser
+          tab, a Pi, a Fire Stick.
+        </li>
+        <li>
+          Scan its QR with your phone camera, or type the code at
+          <a href="/link">/link</a>.
+        </li>
+      </ol>
+
+      <p class="note">
+        Serving from <code>{ORIGIN}</code>. The QR encodes this origin, so it
+        has to be a host the phone can reach — <code>localhost</code> in a QR is
+        useless to another device.
+      </p>
+    </section>
+  </main>
+</Base>
+
+<style>
+  main {
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+  }
+  .card {
+    width: min(100%, 32rem);
+    display: grid;
+    gap: 1rem;
+    padding: 1.75rem;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--ground-lift);
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.5rem;
+  }
+  .lead {
+    margin: 0;
+    color: var(--ink-dim);
+    line-height: 1.5;
+  }
+  .steps {
+    margin: 0;
+    padding-left: 1.2rem;
+    display: grid;
+    gap: 0.75rem;
+    line-height: 1.55;
+  }
+  a {
+    color: var(--accent);
+  }
+  .note {
+    margin: 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.85rem;
+    color: var(--ink-dim);
+    line-height: 1.5;
+  }
+  code {
+    color: var(--ink);
+  }
+</style>

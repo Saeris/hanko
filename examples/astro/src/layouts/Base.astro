@@ -1,0 +1,95 @@
+---
+interface Props {
+  title: string;
+  /**
+   * TV screens are viewed from metres away and never scroll; phone screens are
+   * held at arm's length and do. The two need different type scales and
+   * spacing, so the surface picks its own scale rather than sharing one.
+   */
+  surface: "tv" | "phone";
+}
+
+const { title, surface } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" data-surface={surface}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#160c1e" />
+    <style is:global>
+      :root {
+        --ink: #f4ecf7;
+        --ink-dim: #b9a6c4;
+        --accent: #f0b429;
+        --ground: #160c1e;
+        --ground-lift: #241634;
+        --line: #3a2a4d;
+        --ok: #4ade80;
+        --bad: #f87171;
+
+        color-scheme: dark;
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        color: var(--ink);
+        /* Radial rather than flat: a large dark panel on a TV shows banding,
+           and the gradient hides it while giving the QR a lighter surround. */
+        background:
+          radial-gradient(
+            ellipse at 50% 0%,
+            var(--ground-lift) 0%,
+            var(--ground) 60%
+          ),
+          var(--ground);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* The TV never scrolls — it is a fixed 1920x1080 surface with no input
+         device that could scroll it. Anything overflowing is a layout bug, so
+         make it visible rather than hiding it behind a scrollbar nobody has. */
+      html[data-surface="tv"],
+      html[data-surface="tv"] body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      button {
+        font: inherit;
+        cursor: pointer;
+      }
+
+      /* Fire OS remotes move focus with a D-pad and there is no pointer, so a
+         visible focus ring is the ONLY way to know what is selected. Never
+         remove it on a TV surface. */
+      :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

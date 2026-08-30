@@ -1,0 +1,368 @@
+---
+import Base from "../layouts/Base.astro";
+import { authenticate } from "../lib/hanko.js";
+
+// The code may arrive three ways: typed by the user, from a scanned QR's query
+// string (the Plex path), or from a universal link that opened a native app.
+// All three land here with the same parameter.
+const prefilled = Astro.url.searchParams.get(`user_code`) ?? ``;
+const subject = authenticate(Astro.request);
+---
+
+<Base title="Approve sign-in — hanko" surface="phone">
+  <main>
+    {
+      subject === null ? (
+        <section class="card">
+          <h1>Sign in first</h1>
+          <p class="lead">
+            Approving a device hands it your identity, so this page needs you
+            signed in on this phone.
+          </p>
+          <a
+            class="btn primary"
+            href={`/signin?next=${encodeURIComponent(Astro.url.pathname + Astro.url.search)}`}
+          >
+            Sign in
+          </a>
+        </section>
+      ) : (
+        <section class="card" id="card" data-subject={subject}>
+          <h1>Approve sign-in</h1>
+          <p class="lead" id="lead">
+            Enter the code shown on the other device.
+          </p>
+
+          <form id="lookup" class:list={["step", prefilled && "hidden"]}>
+            <label class="field">
+              <span>Code from the screen</span>
+              <input
+                id="code"
+                name="user_code"
+                value={prefilled}
+                placeholder="WDJB-MJHT"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                required
+              />
+            </label>
+            <button class="btn primary" type="submit">Continue</button>
+          </form>
+
+          <div id="confirm" class="step hidden">
+            <div class="callout">
+              <span class="callout-label">Code on that screen</span>
+              <strong class="callout-code" id="server-code" />
+            </div>
+
+            <p class="lead">
+              Type it again to confirm you can see it. This is what stops
+              someone else&rsquo;s device being signed in as you.
+            </p>
+
+            <label class="field">
+              <span>Re-enter the code</span>
+              <input
+                id="challenge"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+              />
+            </label>
+
+            <p class="error hidden" id="error" role="alert" />
+
+            <div class="actions">
+              <button class="btn primary" id="approve" type="button" disabled>
+                Approve
+              </button>
+              <button class="btn ghost" id="deny" type="button">Deny</button>
+            </div>
+          </div>
+
+          <p class="outcome hidden" id="outcome" role="status" aria-live="polite" />
+
+          <p class="who">
+            Signed in as <strong>{subject}</strong>
+          </p>
+        </section>
+      )
+    }
+  </main>
+</Base>
+
+<script>
+  import {
+    ApprovalClient,
+    codeEntryChallenge,
+    consumeLaunchTarget,
+    parseApprovalLink
+  } from "@saeris/hanko/approve";
+
+  const card = document.getElementById(`card`);
+  if (card) {
+    const $ = (id: string) => document.getElementById(id)!;
+    const lookup = $(`lookup`) as HTMLFormElement;
+    const codeInput = $(`code`) as HTMLInputElement;
+    const challengeInput = $(`challenge`) as HTMLInputElement;
+    const approveBtn = $(`approve`) as HTMLButtonElement;
+    const error = $(`error`);
+    const outcome = $(`outcome`);
+
+    const show = (el: HTMLElement, on: boolean) =>
+      el.classList.toggle(`hidden`, !on);
+
+    /** Insert the separator every four characters, to match the TV's display. */
+    const groupCode = (code: string) =>
+      (code.match(/.{1,4}/gu) ?? [code]).join(`-`);
+
+    const client = new ApprovalClient({
+      // The library never assumes a transport — the host wires its own fetches.
+      resolve: async (userCode) => {
+        const res = await fetch(
+          `/api/link?user_code=${encodeURIComponent(userCode)}`
+        );
+        if (!res.ok) return null;
+        const body = (await res.json()) as {
+          user_code: string;
+          client_id?: string;
+        };
+        return { userCode: body.user_code, clientId: body.client_id };
+      },
+      submit: async (userCode, approved) => {
+        await fetch(`/api/link`, {
+          method: `POST`,
+          headers: { "content-type": `application/x-www-form-urlencoded` },
+          body: new URLSearchParams({
+            user_code: userCode,
+            approved: String(approved)
+          })
+        });
+      },
+      // RFC 8628 §5.4's check, made explicit. `noChallenge()` is what Discord
+      // and Steam ship, but this screen is reachable by anyone with the URL,
+      // so the code has to be proven visible.
+      challenge: codeEntryChallenge(),
+      hooks: {
+        onTransition: (_from, to) => {
+          show($(`lookup`), to === `idle` || to === `resolving`);
+          show($(`confirm`), to === `confirming`);
+
+          if (to === `confirming` && client.grant) {
+            // Re-grouped for display. The server stores codes normalized, so
+            // lookup never depends on formatting — but the other screen shows
+            // `KCVS-GZBV`, and a user comparing two slightly different strings
+            // loses exactly the confidence this check exists to build.
+            $(`server-code`).textContent = groupCode(client.grant.userCode);
+            challengeInput.focus();
+          }
+
+          if (to === `invalid`) {
+            outcome.textContent = `That code is not valid, or it has expired.`;
+            outcome.dataset.tone = `bad`;
+            show(outcome, true);
+            show($(`lookup`), true);
+          }
+        },
+        onChallengeFailed: (_reason, attempts) => {
+          error.textContent =
+            attempts > 2
+              ? `Still no match. Check the code on the other screen.`
+              : `That does not match.`;
+          show(error, true);
+        },
+        onSettled: (state) => {
+          show($(`confirm`), false);
+          outcome.textContent =
+            state === `approved`
+              ? `Approved. The other device is signing in now.`
+              : `Denied. Nothing was signed in.`;
+          outcome.dataset.tone = state === `approved` ? `ok` : `bad`;
+          show(outcome, true);
+        },
+        onError: () => {
+          error.textContent = `Could not reach the server. Try again.`;
+          show(error, true);
+        }
+      }
+    });
+
+    lookup.addEventListener(`submit`, (event) => {
+      event.preventDefault();
+      void client.submitCode(codeInput.value);
+    });
+
+    // Verify as the user types so the button enables the moment it matches —
+    // less frustrating than typing eight characters and being told no.
+    challengeInput.addEventListener(`input`, () => {
+      show(error, false);
+      void (async () => {
+        approveBtn.disabled = !(await client.confirm(challengeInput.value));
+      })();
+    });
+
+    approveBtn.addEventListener(`click`, () => void client.approve());
+    $(`deny`).addEventListener(`click`, () => void client.deny());
+
+    // Handles an installed PWA launched by a scanned link. Falls back to
+    // location.href where launchQueue is unsupported (Safari, Firefox), so no
+    // branching is needed here.
+    consumeLaunchTarget((href) => {
+      const link = parseApprovalLink(href);
+      if (link && client.state === `idle`) void client.submitCode(link.userCode);
+    });
+
+    // Arrived with a code already in the URL — scanned QR or universal link.
+    if (codeInput.value) void client.submitCode(codeInput.value);
+  }
+</script>
+
+<style>
+  main {
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+  }
+
+  .card {
+    width: min(100%, 26rem);
+    display: grid;
+    gap: 1rem;
+    padding: 1.75rem;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--ground-lift);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 1.4rem;
+    letter-spacing: -0.01em;
+  }
+
+  .lead {
+    margin: 0;
+    color: var(--ink-dim);
+    line-height: 1.5;
+    font-size: 0.95rem;
+  }
+
+  .step {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .hidden {
+    display: none;
+  }
+
+  .callout {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--ground);
+    text-align: center;
+  }
+
+  .callout-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+
+  .callout-code {
+    font-size: 1.9rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--ink-dim);
+  }
+
+  input {
+    /* 16px minimum: iOS Safari zooms the viewport on focus for anything
+       smaller, which yanks the layout sideways mid-entry. */
+    font: inherit;
+    font-size: 1.05rem;
+    letter-spacing: 0.1em;
+    padding: 0.75rem 0.9rem;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--ground);
+    color: var(--ink);
+    text-transform: uppercase;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.75rem;
+  }
+
+  .btn {
+    /* 44px is Apple's minimum touch target; anything smaller is a mis-tap on a
+       screen being held one-handed. */
+    min-height: 44px;
+    padding: 0.7rem 1.1rem;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    font-weight: 600;
+    text-decoration: none;
+    display: grid;
+    place-items: center;
+  }
+
+  .btn.primary {
+    background: var(--accent);
+    color: #2a1c05;
+  }
+
+  .btn.primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn.ghost {
+    background: transparent;
+    border-color: var(--line);
+    color: var(--ink);
+  }
+
+  .error {
+    margin: 0;
+    color: var(--bad);
+    font-size: 0.875rem;
+  }
+
+  .outcome {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .outcome[data-tone="ok"] {
+    color: var(--ok);
+  }
+
+  .outcome[data-tone="bad"] {
+    color: var(--bad);
+  }
+
+  .who {
+    margin: 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.8rem;
+    color: var(--ink-dim);
+  }
+</style>
