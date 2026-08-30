@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { authenticate, sessionToken } from "../../lib/hanko.js";
+import { authenticate, sameOrigin, sessionToken } from "../../lib/hanko.js";
 import { listSessions, revokeAll, revokeSession } from "../../lib/sessions.js";
 
 /** The signed-in devices for this account. */
@@ -21,8 +21,15 @@ export const GET: APIRoute = ({ request }) => {
  * Scoped to the authenticated subject, so a guessed id cannot reach another
  * account's devices — the public ids are deliberately short, and the scope is
  * what makes that safe.
+ *
+ * Origin-checked for the same reason as approval: signing someone's devices
+ * out from another site would be a denial-of-service worth having.
  */
 export const POST: APIRoute = async ({ request }) => {
+  if (!sameOrigin(request)) {
+    return Response.json({ error: `invalid_origin` }, { status: 403 });
+  }
+
   const subject = authenticate(request);
   if (subject === null) {
     return Response.json({ error: `unauthorized` }, { status: 401 });

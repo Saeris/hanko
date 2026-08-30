@@ -2,9 +2,11 @@
 import Base from "../layouts/Base.astro";
 import { authenticate } from "../lib/hanko.js";
 
-// The code may arrive three ways: typed by the user, from a scanned QR's query
-// string (the Plex path), or from a universal link that opened a native app.
-// All three land here with the same parameter.
+// A scanned QR carries the DEVICE, not the code. The code is still read off
+// that device's screen and typed here — knowing which device wants in is not
+// the same as being able to let it in.
+const scannedDevice = Astro.url.searchParams.get(`device`) ?? ``;
+// Kept for the RFC-default QR shape, where the code does arrive in the URL.
 const prefilled = Astro.url.searchParams.get(`user_code`) ?? ``;
 const subject = authenticate(Astro.request);
 ---
@@ -30,7 +32,10 @@ const subject = authenticate(Astro.request);
         <section class="card" id="card" data-subject={subject}>
           <h1>Approve sign-in</h1>
 
-          <div id="scanner" class:list={["step", prefilled && "hidden"]}>
+          <div
+            id="scanner"
+            class:list={["step", (prefilled || scannedDevice) && "hidden"]}
+          >
             <p class="lead">Point your camera at the code on the other device.</p>
             <div class="viewfinder">
               <video id="video" playsinline muted></video>
@@ -43,7 +48,16 @@ const subject = authenticate(Astro.request);
             </button>
           </div>
 
-          <form id="lookup" class="step hidden">
+          <form
+            id="lookup"
+            class:list={["step", !scannedDevice && "hidden"]}
+            data-device={scannedDevice}
+          >
+            <div id="scanned-banner" class="callout hidden">
+              <span class="callout-label">Signing in</span>
+              <strong class="callout-client" id="scanned-name">A device</strong>
+            </div>
+
             <p class="lead">Enter the code shown on the other device.</p>
             <label class="field">
               <span>Code from the screen</span>
@@ -65,19 +79,14 @@ const subject = authenticate(Astro.request);
           </form>
 
           <div id="confirm" class="step hidden">
-            <p class="lead">
-              <strong id="client-name">A device</strong> is asking to sign in as
-              you.
-            </p>
-
             <div class="callout">
-              <span class="callout-label">Check this matches that screen</span>
-              <strong class="callout-code" id="server-code" />
+              <span class="callout-label">Signing in</span>
+              <strong class="callout-client" id="client-name">A device</strong>
             </div>
 
             <p class="lead">
-              If that code is not the one on the device in front of you,
-              someone else is trying to sign in. Deny it.
+              You entered the code from this device's screen, which is what
+              proves you can see it. Approve only if you started this sign-in.
             </p>
 
             <p class="error hidden" id="error" role="alert" />
@@ -120,6 +129,8 @@ const subject = authenticate(Astro.request);
     const scanner = $(`scanner`);
     const video = $(`video`) as HTMLVideoElement;
     const scanStatus = $(`scan-status`);
+    const scannedBanner = $(`scanned-banner`);
+    const scannedName = $(`scanned-name`);
 
     const show = (el: HTMLElement, on: boolean) =>
       el.classList.toggle(`hidden`, !on);
@@ -198,7 +209,6 @@ const subject = authenticate(Astro.request);
             // Both halves of what §3.3.1 asks the server to show: which device
             // is asking, and the code to compare against that device's screen.
             $(`client-name`).textContent = client.grant.clientId ?? `A device`;
-            $(`server-code`).textContent = client.grant.userCode;
 
             // `noChallenge` passes immediately; running it here keeps the
             // machine's contract intact rather than special-casing the button.
@@ -322,9 +332,29 @@ const subject = authenticate(Astro.request);
       }
     };
 
-    // Arrived with a code already in the URL — scanned QR or universal link.
-    // No camera needed in that case; the code is already in hand.
-    if (codeInput.value) {
+    const scannedDevice = lookup.dataset.device ?? ``;
+
+    if (scannedDevice) {
+      // Scanned this app's QR, which carries WHICH device — not the code. Name
+      // it so the user can recognise what they are approving, then let them
+      // type the code from that device's own screen.
+      void (async () => {
+        const res = await fetch(
+          `/api/device-info?device=${encodeURIComponent(scannedDevice)}`
+        );
+        if (!res.ok) {
+          outcome.textContent = `That device is no longer waiting to sign in.`;
+          outcome.dataset.tone = `bad`;
+          show(outcome, true);
+          return;
+        }
+        const info = (await res.json()) as { client_id?: string };
+        scannedName.textContent = info.client_id ?? `A device`;
+        show(scannedBanner, true);
+        codeInput.focus();
+      })();
+    } else if (codeInput.value) {
+      // The RFC-default QR shape, where the code itself arrives in the URL.
       void client.submitCode(codeInput.value);
     } else {
       void startCamera();

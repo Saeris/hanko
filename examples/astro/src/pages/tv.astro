@@ -1,7 +1,11 @@
 ---
 import { renderDeviceQr } from "@saeris/hanko";
 import Base from "../layouts/Base.astro";
-import { originOf, resumeOrCreateGrant } from "../lib/hanko.js";
+import {
+  originOf,
+  publicDeviceId,
+  resumeOrCreateGrant
+} from "../lib/hanko.js";
 
 // The origin the browser actually reached. A grant created here is only
 // reachable through the SAME origin — the store is shared, but the QR and the
@@ -27,7 +31,13 @@ const grant = isLocal
     await resumeOrCreateGrant({
       cookies: Astro.cookies,
       clientId: `demo-tv`,
-      verificationUri: `${origin}/link`
+      verificationUri: `${origin}/link`,
+      // The QR carries WHICH device is asking, not the code that approves it.
+      // A photograph of the screen then reveals only an identifier; approving
+      // still needs the code read off that same screen. Two independent facts,
+      // neither sufficient alone.
+      buildQrTarget: async (deviceCode) =>
+        `${origin}/link?device=${await publicDeviceId(deviceCode)}`
     });
 
 const qr =
@@ -141,6 +151,36 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
     document.body.dataset.settled = tone;
   };
 
+  /**
+   * Notice when this device's session is revoked.
+   *
+   * Stands in for the API calls a real app would be making anyway — any one of
+   * them would come back 401 and trigger the same handling. Without it, a
+   * device revoked from the account screen sits on "You're signed in"
+   * indefinitely, which is exactly the wrong thing for a revocation UI to do.
+   */
+  const watchSession = (token) => {
+    const check = async () => {
+      try {
+        const res = await fetch(`/api/session`, {
+          headers: { authorization: `Bearer ${token}` }
+        });
+        if (res.status === 401) {
+          finish(
+            `Signed out`,
+            `This device's access was revoked. Reload to sign in again.`,
+            `bad`
+          );
+          return;
+        }
+      } catch {
+        // Offline. Not evidence of revocation — keep watching.
+      }
+      setTimeout(() => void check(), 5000);
+    };
+    setTimeout(() => void check(), 5000);
+  };
+
   const poll = async () => {
     if (Date.now() >= deadline) {
       finish(`That code expired`, `Reload this page to get a new one.`, `bad`);
@@ -195,6 +235,11 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
           `Signed in as ${body.subject}. You can start using this device.`,
           `ok`
         );
+        // The device flow is over — polling the token endpoint again would be
+        // wrong. But the SESSION can still be revoked from the account screen,
+        // and a real app would discover that on its next API call. This screen
+        // makes no calls, so it watches its own session instead.
+        watchSession(body.access_token);
         return;
       default:
         // An unrecognized code is not evidence the user decided anything.
