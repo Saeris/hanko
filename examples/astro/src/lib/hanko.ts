@@ -73,19 +73,6 @@ export const authenticate = (request: Request): string | null => {
 };
 
 /**
- * Stand-in for minting a credential.
- *
- * hanko carries the subject and stops; issuing the session is the host app's
- * job. A real implementation would return a JWT, set a cookie, or hand back
- * whatever Better-Auth or Supabase issues.
- */
-export const createSession = (subject: string): object => ({
-  access_token: `demo-token-for-${subject}`,
-  token_type: `Bearer`,
-  subject
-});
-
-/**
  * Public origin a request actually arrived on.
  *
  * Mirrors what `createAuthorizationHandler` does internally, for the pages that
@@ -170,3 +157,13 @@ const readGrantCookie = (
     return undefined;
   }
 };
+
+/**
+ * Display name for a subject.
+ *
+ * The approving page stores the handle in its session cookie, so what reaches
+ * `createSession` is already human-readable. Kept as a seam because a real app
+ * carries the DID as its subject and resolves the handle for display —
+ * handles change, DIDs do not.
+ */
+export const subjectHandle = (subject: string): string => subject;

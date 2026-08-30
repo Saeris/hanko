@@ -142,23 +142,60 @@ and may need the URL opened from a QR rather than typed.
    same tunnel URL**, not `localhost`. It shows a code and a QR and polls.
 3. **Phone:** the approval screen opens a camera first. Point it at the QR, or
    tap "enter the code instead".
-4. **Phone:** re-enter the code to confirm you can see the screen you are
-   authorizing, then approve.
-5. **Second screen:** the next poll picks it up and shows who it signed in as.
+4. **Phone:** approve. If you scanned, you are asked to type the code first —
+   if you typed it, you are not. See below.
+5. **Phone:** you land on `/account`, where the new device appears as a row.
+   Revoke it and its next request stops resolving.
 
 Reloading `/tv` keeps the same code — the grant is bound to that browser, so a
 refresh does not invalidate a code someone is halfway through typing.
+
+## Why the confirmation step is conditional
+
+RFC 8628 §5.4 asks the approval screen to confirm the user can see the device
+they are authorizing. The reason it gives is specific:
+
+> it is particularly important to confirm that the device is in the user's
+> possession, **as the user no longer has to type in the code being displayed
+> on the device manually**
+
+The check exists to **replace** manual typing, not to duplicate it. So:
+
+| How the code arrived | Confirmation  | Why                                            |
+| -------------------- | ------------- | ---------------------------------------------- |
+| Scanned, or a link   | type the code | nothing has proven the user can see the screen |
+| Typed by hand        | none          | typing it already proved exactly that          |
+
+Asking someone to re-type a code they just typed is friction that buys nothing,
+and it is why Plex does not do it either. `hanko` ships both strategies; which
+one applies is the host app's decision, made per flow rather than per install.
+
+## The device list
+
+`/account` is a protected route showing every device signed in to the account —
+the half a device-flow demo usually leaves out. Approving a device is only half
+a trust decision; the other half is seeing what you approved and taking it back.
+Steam and Discord both ship this screen.
+
+Revocation is real rather than cosmetic: the session store is the authority, so
+a revoked device's next request simply stops resolving. The list updates in
+place over Server-Sent Events, so approving on a phone visibly adds a row.
+
+SSE rather than a WebSocket because the channel only ever flows server →
+browser, it reconnects on its own, and it rides plain HTTP — so it works
+through a tunnel with no upgrade negotiation.
 
 Every transition is logged in the terminal running the dev server, so the flow
 can be followed across three devices without attaching a debugger to any.
 
 ## The three surfaces
 
-| Route     | Device                | What it does                                    |
-| --------- | --------------------- | ----------------------------------------------- |
-| `/tv`     | the screen signing in | shows the code and QR, polls for approval       |
-| `/link`   | your phone            | resolves the code, runs the challenge, approves |
-| `/signin` | your phone            | stands in for the host app's real auth          |
+| Route      | Device                | What it does                                |
+| ---------- | --------------------- | ------------------------------------------- |
+| `/tv`      | the screen signing in | shows the code and QR, polls for approval   |
+| `/link`    | your phone            | scans or accepts a code, confirms, approves |
+| `/signin`  | your phone            | resolves an ATProto handle to a DID         |
+| `/account` | your phone            | signed-in devices, revoke, sign out         |
 
 `/tv` is inline CSS and dependency-free JavaScript, so it costs nothing on
 modest hardware.
@@ -188,5 +225,12 @@ modest hardware.
 - **The grant is bound to a cookie**, so reloading `/tv` keeps the same code.
   A real deployment would key it to whatever identifies the screen — a device
   registration, a kiosk id — rather than a browser cookie.
+- **Sessions live in memory**, so they die with the process and are not shared
+  between instances. Revocation is genuinely enforced, but only within one
+  server; put them in the same store as the grants for anything real.
+- **The QR scanner bundles a WASM ponyfill.** Safari has never shipped
+  `BarcodeDetector`, so on an iPhone the ponyfill is the implementation rather
+  than a fallback. It is imported dynamically, so only a page that opens a
+  camera pays for it.
 
 [portless]: https://github.com/vercel-labs/portless

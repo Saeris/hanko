@@ -71,23 +71,25 @@ const subject = authenticate(Astro.request);
               <strong class="callout-code" id="server-code" />
             </div>
 
-            <p class="lead">
-              Type it again to confirm you can see it. This is what stops
-              someone else&rsquo;s device being signed in as you.
-            </p>
+            <div id="recheck" class="recheck">
+              <p class="lead">
+                Type it to confirm you can see it on that screen. This is what
+                stops someone else&rsquo;s device being signed in as you.
+              </p>
 
-            <label class="field">
-              <span>Re-enter the code</span>
-              <input
-                id="challenge"
-                maxlength="8"
-                enterkeyhint="done"
-                autocomplete="one-time-code"
-                autocorrect="off"
-                autocapitalize="characters"
-                spellcheck="false"
-              />
-            </label>
+              <label class="field">
+                <span>Enter the code</span>
+                <input
+                  id="challenge"
+                  maxlength="8"
+                  enterkeyhint="done"
+                  autocomplete="one-time-code"
+                  autocorrect="off"
+                  autocapitalize="characters"
+                  spellcheck="false"
+                />
+              </label>
+            </div>
 
             <p class="error hidden" id="error" role="alert" />
 
@@ -114,6 +116,7 @@ const subject = authenticate(Astro.request);
   import {
     ApprovalClient,
     codeEntryChallenge,
+    noChallenge,
     consumeLaunchTarget,
     createBarcodeDetectorScanner,
     hasNativeBarcodeDetector,
@@ -153,10 +156,23 @@ const subject = authenticate(Astro.request);
 
     const showCodeEntry = (): void => {
       stopCamera();
+      arrivedByScan = false;
       show(scanner, false);
       show(lookup, true);
       codeInput.focus();
     };
+
+    /**
+     * Whether the code reached us without the user reading it.
+     *
+     * True for a scan or a `verification_uri_complete` in the URL, false once
+     * they switch to typing. Decides whether §5.4's confirmation is warranted
+     * — see the `challenge` option below.
+     */
+    let arrivedByScan = codeInput.value.length > 0;
+
+    const codeEntry = codeEntryChallenge();
+    const none = noChallenge();
 
     const client = new ApprovalClient({
       // The library never assumes a transport — the host wires its own fetches.
@@ -181,10 +197,30 @@ const subject = authenticate(Astro.request);
           })
         });
       },
-      // RFC 8628 §5.4's check, made explicit. `noChallenge()` is what Discord
-      // and Steam ship, but this screen is reachable by anyone with the URL,
-      // so the code has to be proven visible.
-      challenge: codeEntryChallenge(),
+      // Conditional on HOW the code arrived, which is what RFC 8628 §5.4
+      // actually asks for:
+      //
+      //   "it is particularly important to confirm that the device is in the
+      //    user's possession, AS THE USER NO LONGER HAS TO TYPE IN THE CODE
+      //    being displayed on the device manually."
+      //
+      // The check exists to REPLACE manual typing, not to duplicate it. If the
+      // code was scanned or arrived in a URL, nothing has proven the user can
+      // see the screen — so ask. If they typed it, they already proved exactly
+      // that, and asking again is friction that buys nothing. Plex works this
+      // way for the same reason.
+      // Decided at verify time rather than at construction, because the user
+      // can switch from scanning to typing after the client exists — and a
+      // challenge captured up front would not follow them.
+      challenge: {
+        kind: `conditional`,
+        present: (userCode) =>
+          arrivedByScan ? codeEntry.present(userCode) : null,
+        verify: async (answer, userCode) =>
+          arrivedByScan
+            ? await codeEntry.verify(String(answer ?? ``), userCode)
+            : await none.verify(undefined, userCode)
+      },
       hooks: {
         onTransition: (_from, to) => {
           // Past `resolving` the camera has done its job; releasing it here
@@ -193,6 +229,7 @@ const subject = authenticate(Astro.request);
           if (to !== `idle` && to !== `scanning`) stopCamera();
 
           show(scanner, to === `idle` || to === `scanning`);
+          show(lookup, false);
           show($(`confirm`), to === `confirming`);
 
           if (to === `confirming` && client.grant) {
@@ -201,7 +238,20 @@ const subject = authenticate(Astro.request);
             // `KCVS-GZBV`, and a user comparing two slightly different strings
             // loses exactly the confidence this check exists to build.
             $(`server-code`).textContent = groupCode(client.grant.userCode);
-            challengeInput.focus();
+
+            // The re-entry field only makes sense when the code arrived
+            // without being read. Someone who typed it has already proven they
+            // can see the screen, so they go straight to approve or deny.
+            show($(`recheck`), arrivedByScan);
+            if (arrivedByScan) {
+              challengeInput.focus();
+            } else {
+              // No challenge to pass, so unlock the button immediately.
+              void (async () => {
+                await client.confirm();
+                approveBtn.disabled = false;
+              })();
+            }
           }
 
           if (to === `invalid`) {
@@ -230,6 +280,16 @@ const subject = authenticate(Astro.request);
               : `Denied. Nothing was signed in.`;
           outcome.dataset.tone = state === `approved` ? `ok` : `bad`;
           show(outcome, true);
+
+          // Lands on the device list, where the newly approved device appears
+          // as a row you can revoke. Delayed so the outcome is readable first
+          // — an instant redirect reads as the tap having done something
+          // unrelated.
+          if (state === `approved`) {
+            setTimeout(() => {
+              globalThis.location.href = `/account`;
+            }, 1200);
+          }
         },
         onError: () => {
           error.textContent = `Could not reach the server. Try again.`;
@@ -272,12 +332,6 @@ const subject = authenticate(Astro.request);
      * pointed at the user, not at the screen they are trying to scan.
      */
     const startCamera = async (): Promise<void> => {
-      if (!hasNativeBarcodeDetector()) {
-        scanStatus.textContent = `This browser cannot scan. Enter the code instead.`;
-        showCodeEntry();
-        return;
-      }
-
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: `environment` }
@@ -292,9 +346,25 @@ const subject = authenticate(Astro.request);
 
       video.srcObject = stream;
       await video.play();
-      scanStatus.textContent = `Looking for a code…`;
 
-      const detector = createBarcodeDetectorScanner();
+      // Native where it exists (Chrome, Android), the ponyfill everywhere
+      // else. Safari's support for the Shape Detection API has been absent or
+      // broken for years, so on an iPhone — the device most people will
+      // approve from — the ponyfill IS the implementation, not a fallback.
+      //
+      // Imported dynamically so its ~1MB of WASM loads only when a camera
+      // actually opens. The TV screen never pays for it.
+      let detector;
+      if (hasNativeBarcodeDetector()) {
+        detector = createBarcodeDetectorScanner();
+        scanStatus.textContent = `Looking for a code…`;
+      } else {
+        scanStatus.textContent = `Loading scanner…`;
+        const { BarcodeDetector } = await import(`barcode-detector/ponyfill`);
+        detector = createBarcodeDetectorScanner({ detector: BarcodeDetector });
+        scanStatus.textContent = `Looking for a code…`;
+      }
+
       scanning = true;
 
       const tick = async (): Promise<void> => {
@@ -414,6 +484,11 @@ const subject = authenticate(Astro.request);
     font-size: 0.85rem;
     color: var(--ink-dim);
     text-align: center;
+  }
+
+  .recheck {
+    display: grid;
+    gap: 1rem;
   }
 
   .callout {

@@ -30,6 +30,11 @@ const isLocal = /localhost|127\.0\.0\.1/u.test(origin);
           Scan its QR with your phone camera, or type the code at
           <a href="/link">/link</a>.
         </li>
+        <li>
+          Manage what you have approved at
+          <a href="/account">/account</a> — revoke a device and its next
+          request stops resolving.
+        </li>
       </ol>
 
       <p class="note" data-tone={isLocal ? `warn` : `ok`}>

@@ -1,0 +1,234 @@
+---
+import Base from "../layouts/Base.astro";
+import { authenticate } from "../lib/hanko.js";
+import { listSessions } from "../lib/sessions.js";
+
+// A protected route: everything here is scoped to one account, so an
+// unauthenticated visitor gets sent to sign in rather than an empty page.
+const subject = authenticate(Astro.request);
+if (subject === null) {
+  return Astro.redirect(`/signin?next=/account`);
+}
+
+// Rendered server-side so the list is populated on first paint. The stream
+// below keeps it current from there.
+const sessions = listSessions(subject);
+---
+
+<Base title="Your devices — hanko" surface="phone">
+  <main>
+    <section class="card">
+      <header class="head">
+        <div>
+          <h1>Your devices</h1>
+          <p class="lead">Signed in as <strong>{subject}</strong></p>
+        </div>
+        <form method="POST" action="/signout">
+          <button class="btn ghost small" type="submit">Sign out</button>
+        </form>
+      </header>
+
+      <ul class="devices" id="devices">
+        {
+          sessions.length === 0 ? (
+            <li class="empty" id="empty">
+              No devices yet. Open <a href="/tv">the device screen</a> and
+              approve it to see one here.
+            </li>
+          ) : null
+        }
+      </ul>
+
+      <button class="btn ghost" type="button" id="revoke-all">
+        Sign out all devices
+      </button>
+
+      <p class="note">
+        Revoking is real: the device&rsquo;s next request stops resolving. This
+        list updates as devices come and go.
+      </p>
+    </section>
+  </main>
+</Base>
+
+<script>
+  interface Session {
+    id: string;
+    handle: string;
+    clientId: string;
+    createdAt: number;
+    lastSeenAt: number;
+    device: string;
+    current: boolean;
+  }
+
+  const list = document.getElementById(`devices`)!;
+  const revokeAllBtn = document.getElementById(`revoke-all`)!;
+
+  /** "3 minutes ago", without pulling in a date library for four cases. */
+  const ago = (ms: number): string => {
+    const seconds = Math.round((Date.now() - ms) / 1000);
+    if (seconds < 60) return `just now`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+  };
+
+  const revoke = async (body: Record<string, string>): Promise<void> => {
+    await fetch(`/api/sessions`, {
+      method: `POST`,
+      headers: { "content-type": `application/x-www-form-urlencoded` },
+      body: new URLSearchParams(body)
+    });
+    // No manual refresh: the server notifies its listeners on every mutation,
+    // so the stream below repaints this list on its own.
+  };
+
+  const render = (sessions: Session[]): void => {
+    list.replaceChildren();
+
+    if (sessions.length === 0) {
+      const empty = document.createElement(`li`);
+      empty.className = `empty`;
+      empty.textContent = `No devices yet. Approve one to see it here.`;
+      list.append(empty);
+      revokeAllBtn.hidden = true;
+      return;
+    }
+
+    revokeAllBtn.hidden = false;
+
+    for (const session of sessions) {
+      const row = document.createElement(`li`);
+      row.className = `device`;
+
+      const info = document.createElement(`div`);
+      const name = document.createElement(`strong`);
+      name.textContent = session.device;
+      const meta = document.createElement(`small`);
+      meta.textContent = `${session.clientId} · signed in ${ago(session.createdAt)} · seen ${ago(session.lastSeenAt)}`;
+      info.append(name, meta);
+
+      const button = document.createElement(`button`);
+      button.className = `btn ghost small`;
+      button.type = `button`;
+      button.textContent = `Revoke`;
+      button.addEventListener(`click`, () => void revoke({ id: session.id }));
+
+      row.append(info, button);
+      list.append(row);
+    }
+  };
+
+  revokeAllBtn.addEventListener(`click`, () => void revoke({ all: `true` }));
+
+  // Server-sent events rather than polling: the list only ever flows one way,
+  // and EventSource reconnects on its own if the tunnel blips.
+  const stream = new EventSource(`/api/sessions-stream`);
+  stream.addEventListener(`message`, (event) => {
+    const body = JSON.parse(event.data) as { sessions: Session[] };
+    render(body.sessions);
+  });
+</script>
+
+<style>
+  main {
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+  }
+  .card {
+    width: min(100%, 32rem);
+    display: grid;
+    gap: 1rem;
+    padding: 1.75rem;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--ground-lift);
+  }
+  .head {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.4rem;
+  }
+  .lead {
+    margin: 0.25rem 0 0;
+    color: var(--ink-dim);
+    font-size: 0.9rem;
+  }
+  .devices {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 0.5rem;
+  }
+  .devices :global(.device) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--ground);
+  }
+  .devices :global(.device div) {
+    display: grid;
+    min-width: 0;
+  }
+  .devices :global(.device strong) {
+    font-size: 0.95rem;
+  }
+  .devices :global(.device small) {
+    font-size: 0.78rem;
+    color: var(--ink-dim);
+  }
+  .devices :global(.empty) {
+    padding: 1.25rem 1rem;
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    color: var(--ink-dim);
+    font-size: 0.9rem;
+    text-align: center;
+  }
+  a {
+    color: var(--accent);
+  }
+  .btn {
+    min-height: 44px;
+    padding: 0.7rem 1.1rem;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    font-weight: 600;
+    display: grid;
+    place-items: center;
+  }
+  .btn.ghost {
+    background: transparent;
+    border-color: var(--line);
+    color: var(--ink);
+  }
+  .btn.small {
+    min-height: 36px;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+  .note {
+    margin: 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.8rem;
+    color: var(--ink-dim);
+    line-height: 1.5;
+  }
+</style>
