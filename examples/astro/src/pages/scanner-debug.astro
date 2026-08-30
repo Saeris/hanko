@@ -1,0 +1,120 @@
+---
+/**
+ * Scanner diagnostics.
+ *
+ * The approval page fails silently by design: `onDecodeError` fires on every
+ * frame that has no code in it, so "the worker is broken" and "you are not
+ * pointing at a QR" produce identical output. This page separates them by
+ * reporting each stage on screen — there is no console on a phone.
+ */
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Scanner diagnostics">
+  <main>
+    <h1>Scanner diagnostics</h1>
+    <video id="video" playsinline muted></video>
+    <ol id="log"></ol>
+    <p><a href="/link">back to /link</a></p>
+  </main>
+</Base>
+
+<script>
+  const log = document.getElementById(`log`)!;
+  const video = document.getElementById(`video`) as HTMLVideoElement;
+
+  const say = (text: string, tone = ``): void => {
+    const li = document.createElement(`li`);
+    li.textContent = text;
+    li.dataset.tone = tone;
+    log.append(li);
+  };
+
+  // Anything thrown outside a promise chain — including a worker that fails
+  // to construct — would otherwise vanish on a device with no console.
+  addEventListener(`error`, (e) => say(`window error: ${e.message}`, `bad`));
+  addEventListener(`unhandledrejection`, (e) =>
+    say(`unhandled rejection: ${String(e.reason)}`, `bad`)
+  );
+
+  say(`secure context: ${String(isSecureContext)}`, isSecureContext ? `ok` : `bad`);
+  say(`BarcodeDetector present: ${String(`BarcodeDetector` in globalThis)}`);
+  say(`getUserMedia present: ${String(Boolean(navigator.mediaDevices?.getUserMedia))}`);
+
+  // The worker is built from a Blob URL, which a CSP without `worker-src
+  // blob:` blocks. Constructing one directly says whether that is the problem
+  // BEFORE qr-scanner buries it.
+  try {
+    const probe = new Worker(
+      URL.createObjectURL(new Blob([`self.postMessage('alive')`], { type: `text/javascript` }))
+    );
+    probe.addEventListener(`message`, (e) => {
+      say(`blob worker: ${String(e.data)}`, `ok`);
+      probe.terminate();
+    });
+    probe.addEventListener(`error`, (e) =>
+      say(`blob worker FAILED: ${e.message || `blocked`}`, `bad`)
+    );
+  } catch (error) {
+    say(`blob worker threw: ${String(error)}`, `bad`);
+  }
+
+  try {
+    const { default: QrScanner } = await import(`qr-scanner`);
+    say(`qr-scanner imported`, `ok`);
+    say(`hasCamera: ${String(await QrScanner.hasCamera())}`);
+
+    // Which engine it actually chose. On iOS there is no BarcodeDetector, so
+    // this must be a Worker or nothing will ever decode.
+    try {
+      const engine = await QrScanner.createQrEngine();
+      say(`engine: ${engine.constructor.name}`, `ok`);
+    } catch (error) {
+      say(`createQrEngine FAILED: ${String(error)}`, `bad`);
+    }
+
+    let decodeErrors = 0;
+    const scanner = new QrScanner(
+      video,
+      (result) => say(`DECODED: ${result.data}`, `ok`),
+      {
+        returnDetailedScanResult: true,
+        preferredCamera: `environment`,
+        highlightScanRegion: true,
+        maxScansPerSecond: 5,
+        // Proof the scan loop is running at all. "No QR code found" every
+        // frame is HEALTHY — it means frames are reaching the decoder.
+        onDecodeError: (error) => {
+          decodeErrors++;
+          const text = String(error);
+          if (decodeErrors === 1 || decodeErrors % 25 === 0) {
+            say(`decode attempt ${decodeErrors}: ${text}`);
+          }
+        }
+      }
+    );
+
+    await scanner.start();
+    say(`scanner.start() resolved`, `ok`);
+    say(`video ${video.videoWidth}x${video.videoHeight}, paused=${String(video.paused)}`);
+
+    setTimeout(() => {
+      say(
+        decodeErrors === 0
+          ? `NO decode attempts after 3s — the scan loop is not running`
+          : `${decodeErrors} decode attempts in 3s — loop is alive`,
+        decodeErrors === 0 ? `bad` : `ok`
+      );
+    }, 3000);
+  } catch (error) {
+    say(`FATAL: ${String(error)}`, `bad`);
+  }
+</script>
+
+<style>
+  main { padding: 1rem; font-family: system-ui, sans-serif; }
+  video { width: 100%; max-width: 22rem; border-radius: 8px; background: #000; }
+  ol { font-family: ui-monospace, monospace; font-size: 0.8rem; line-height: 1.5; padding-left: 1.2rem; }
+  li[data-tone="ok"] { color: #2e7d32; }
+  li[data-tone="bad"] { color: #c62828; font-weight: 600; }
+</style>

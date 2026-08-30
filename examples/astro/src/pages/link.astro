@@ -313,7 +313,29 @@ const subject = authenticate(Astro.request);
           // looks like progress rather than nothing happening.
           highlightScanRegion: true,
           highlightCodeOutline: true,
-          maxScansPerSecond: 10
+          maxScansPerSecond: 10,
+          /**
+           * Surface the failures this library otherwise swallows.
+           *
+           * `onDecodeError` fires on EVERY frame without a code — that is
+           * normal and must stay quiet. But real faults arrive through the
+           * same channel, and without this they are discarded: nimiq/qr-scanner
+           * #230 reports a worker `SecurityError` on iOS Safari that presents
+           * exactly like an empty viewfinder, because the decode engine is
+           * built from a `blob:` URL that iOS can refuse (#221, still open).
+           *
+           * Distinguished by content rather than by count: "No QR code found"
+           * is the healthy case, anything else is a fault worth showing,
+           * because a user staring at a live preview that never resolves has
+           * no other signal that something is wrong.
+           */
+          onDecodeError: (error: Error | string): void => {
+            const text = typeof error === `string` ? error : error.message;
+            if (text === QrScanner.NO_QR_CODE_FOUND) return;
+
+            scanStatus.textContent = `Scanner failed: ${text}. Enter the code instead.`;
+            showCodeEntry();
+          }
         }
       );
 
