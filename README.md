@@ -390,6 +390,41 @@ export default {
 The individual handlers — `authorize`, `token`, `approval` — are exported
 separately for file-based routing (Astro, Next, SvelteKit, Vercel Functions).
 
+### Multiple hostnames, one deployment
+
+The QR has to encode the host the device is actually talking to. One deployment
+is commonly reachable through several — a preview URL, a custom domain, a
+tunnel during development — and a `verificationUri` fixed at construction time
+points at only one of them. The failure is silent: the code renders correctly
+and the phone lands nowhere.
+
+`createAuthorizationHandler` therefore derives the origin per request from
+`x-forwarded-host` and `x-forwarded-proto`, which every common proxy sets —
+ngrok, Cloudflare, Vercel, nginx. The configured `verificationUri` remains the
+fallback for direct requests that carry no forwarded headers.
+
+```ts
+createAuthorizationHandler({
+  server,
+  verificationPath: `/link`, // appended to the detected origin
+  trustForwardedHost: true // the default
+});
+```
+
+Set `trustForwardedHost: false` to always use the configured value. Worth doing
+if your platform does not strip client-sent `x-forwarded-*` headers and you
+would rather pin the origin: those headers are client-controllable in that
+case. They are safe for building a URL the same client will visit — which is
+all this does — but never use them for an authorization decision.
+
+Calling the server directly takes the same override:
+
+```ts
+await server.requestAuthorization({
+  verificationUri: `https://${request.headers.get("x-forwarded-host")}/link`
+});
+```
+
 ### Persistence
 
 | Layer                               | Adapter                                                     |

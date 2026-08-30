@@ -93,21 +93,72 @@ export interface HandlerOptions {
 }
 
 /**
+ * Public origin this request actually arrived on.
+ *
+ * `request.url` is unreliable behind a proxy: it carries the internal host the
+ * proxy forwarded to, not the one the client typed. `x-forwarded-host` and
+ * `x-forwarded-proto` carry the real ones, and every common proxy sets them —
+ * ngrok, Cloudflare, Vercel, nginx.
+ *
+ * Returns `null` when nothing usable is present, so the caller falls back to
+ * its configured value rather than guessing.
+ *
+ * These headers are CLIENT-CONTROLLABLE when no proxy strips them, so this is
+ * only safe for building a URL the same client will visit. Never use it for an
+ * authorization decision.
+ */
+const forwardedOrigin = (request: Request): string | null => {
+  const host = request.headers.get(`x-forwarded-host`);
+  if (host === null || host.length === 0) return null;
+
+  // A comma-separated list when several proxies chained; the first is the
+  // original client-facing host. Each hop appends, so taking the last would
+  // give the innermost proxy — the one host guaranteed to be private.
+  const [first] = host.split(`,`);
+  const cleaned = first.trim();
+  if (cleaned.length === 0) return null;
+
+  const proto = request.headers.get(`x-forwarded-proto`)?.split(`,`)[0]?.trim();
+  return `${proto === undefined || proto.length === 0 ? `https` : proto}://${cleaned}`;
+};
+
+/**
  * The device-authorization endpoint. `POST /device/authorize`.
  *
  * Unauthenticated: the whole point is that the device has no credentials yet.
  */
 export const createAuthorizationHandler =
-  ({ server }: Pick<HandlerOptions, `server`>) =>
+  ({
+    server,
+    verificationPath = `/link`,
+    trustForwardedHost = true
+  }: Pick<HandlerOptions, `server`> & {
+    /** Path of the approval page, appended to the detected origin. */
+    verificationPath?: string;
+    /**
+     * Derive the verification URI from the request's forwarded headers.
+     *
+     * On by default because it is what makes one deployment work across a
+     * preview URL, a custom domain, and a tunnel without a redeploy. Set false
+     * to always use the configured `verificationUri` — worth doing if your
+     * platform does not strip client-sent `x-forwarded-*` headers and you would
+     * rather pin the origin than trust them.
+     */
+    trustForwardedHost?: boolean;
+  }) =>
   async (request: Request): Promise<Response> => {
     if (request.method !== `POST`) {
       return json({ error: `method_not_allowed` }, 405);
     }
 
+    const origin = trustForwardedHost ? forwardedOrigin(request) : null;
     const params = await readParams(request);
     const grant = await server.requestAuthorization({
       clientId: params.client_id,
-      scope: params.scope
+      scope: params.scope,
+      // Undefined falls through to the server's configured value.
+      verificationUri:
+        origin === null ? undefined : `${origin}${verificationPath}`
     });
     return json(grant);
   };

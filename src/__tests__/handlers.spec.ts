@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHandlers } from "../handlers.js";
+import { createAuthorizationHandler, createHandlers } from "../handlers.js";
 import { HankoServer } from "../server.js";
 import { KvDeviceGrantStore } from "../stores/kv.js";
 import type { KeyValueAdapter } from "../stores/kv.js";
@@ -268,5 +268,98 @@ describe(`kvDeviceGrantStore`, () => {
     });
 
     expect(ttls[0]).toBe(960);
+  });
+});
+
+describe(`forwarded origin`, () => {
+  it(`builds the QR target from the host the client actually reached`, async () => {
+    // WHY: the whole reason this exists. Behind a tunnel or a proxy the request
+    // URL carries the INTERNAL host, so a QR built from it points somewhere the
+    // phone cannot reach — and the failure is silent, because the code looks
+    // perfectly valid on screen.
+    const { handlers } = setup();
+    const response = await handlers.authorize(
+      new Request(`https://api.test/device/authorize`, {
+        method: `POST`,
+        headers: {
+          "content-type": `application/x-www-form-urlencoded`,
+          "x-forwarded-host": `abcd-1-2-3-4.ngrok-free.app`,
+          "x-forwarded-proto": `https`
+        },
+        body: new URLSearchParams({})
+      })
+    );
+    const grant = (await response.json()) as {
+      verification_uri: string;
+      verification_uri_complete: string;
+    };
+
+    expect(grant.verification_uri).toBe(
+      `https://abcd-1-2-3-4.ngrok-free.app/link`
+    );
+    expect(grant.verification_uri_complete).toContain(
+      `https://abcd-1-2-3-4.ngrok-free.app/link?user_code=`
+    );
+  });
+
+  it(`takes the first host when proxies chain`, async () => {
+    // WHY: each hop appends, so the list reads client-first. Taking the last
+    // would give the innermost proxy — the one host guaranteed to be private.
+    const { handlers } = setup();
+    const response = await handlers.authorize(
+      new Request(`https://api.test/device/authorize`, {
+        method: `POST`,
+        headers: {
+          "content-type": `application/x-www-form-urlencoded`,
+          "x-forwarded-host": `public.example.com, internal.lan`,
+          "x-forwarded-proto": `https, http`
+        },
+        body: new URLSearchParams({})
+      })
+    );
+    const grant = (await response.json()) as { verification_uri: string };
+
+    expect(grant.verification_uri).toBe(`https://public.example.com/link`);
+  });
+
+  it(`falls back to the configured URI when no proxy is involved`, async () => {
+    // WHY: a direct request has no forwarded headers, and guessing from the
+    // request URL would break the single-machine case that works today.
+    const { handlers } = setup();
+    const response = await handlers.authorize(
+      post(`https://api.test/device/authorize`, {})
+    );
+    const grant = (await response.json()) as { verification_uri: string };
+
+    expect(grant.verification_uri).toBe(`https://example.com/link`);
+  });
+
+  it(`can be turned off for platforms that do not strip the headers`, async () => {
+    // WHY: `x-forwarded-*` is client-settable when nothing upstream overwrites
+    // it. Safe for building a URL the same client will visit, but an operator
+    // may still prefer to pin the origin — so the behavior is opt-out.
+    const kv = fakeKv();
+    const server = new HankoServer({
+      store: new KvDeviceGrantStore({ kv }),
+      verificationUri: `https://pinned.example.com/link`
+    });
+    const authorize = createAuthorizationHandler({
+      server,
+      trustForwardedHost: false
+    });
+
+    const response = await authorize(
+      new Request(`https://api.test/device/authorize`, {
+        method: `POST`,
+        headers: {
+          "content-type": `application/x-www-form-urlencoded`,
+          "x-forwarded-host": `attacker.example`
+        },
+        body: new URLSearchParams({})
+      })
+    );
+    const grant = (await response.json()) as { verification_uri: string };
+
+    expect(grant.verification_uri).toBe(`https://pinned.example.com/link`);
   });
 });

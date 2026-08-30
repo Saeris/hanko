@@ -38,22 +38,18 @@ choco install ngrok        # or: brew install ngrok
 ngrok config add-authtoken <token>
 ```
 
-Then it is two runs, because the tunnel URL is not known until the tunnel is up
-and the QR has to encode it:
+Then one command:
 
 ```sh
-# 1. Start it, and read the ngrok URL it prints.
 yarn demo:share
-#      ngrok -> https://1817-71-63-254-225.ngrok-free.app
-
-# 2. Stop it (Ctrl+C), start again with that URL as the origin.
-HANKO_ORIGIN=https://1817-71-63-254-225.ngrok-free.app yarn demo:share
+#      ngrok -> https://9a8c-71-63-254-225.ngrok-free.app
 ```
 
-**Free ngrok assigns a new URL on every restart**, so step 2's value is only
-good for that session. Check the `/tv` page shows the ngrok host next to "Visit
-this link in a browser" — if it says `localhost` or `hanko.localhost`, the QR
-points somewhere your phone cannot reach and nothing will work.
+Open that URL on the phone. Nothing else to configure — the QR is built from
+whichever host each request arrives on (`x-forwarded-host`), so the same
+running server serves a correct code to a phone on the tunnel and to a browser
+on `localhost` at the same time. Free ngrok assigns a new URL on every restart;
+that no longer matters.
 
 Two things worth knowing: the tunnel is public while it runs, and free ngrok
 interstitials a browser warning page on first visit. Tap through it once on the
@@ -82,8 +78,8 @@ yarn portless proxy start --lan
 yarn portless run --name hanko astro dev
 ```
 
-Serves at `https://hanko.local`, reachable from any device on the WiFi. Set
-`HANKO_ORIGIN=https://hanko.local` so the QR encodes it.
+Serves at `https://hanko.local`, reachable from any device on the WiFi. The QR
+picks that host up on its own — no environment variable.
 
 **This does not work on Windows.** LAN mode publishes over mDNS, and Portless
 implements publishing only via `dns-sd` (macOS) and `avahi-publish-address`

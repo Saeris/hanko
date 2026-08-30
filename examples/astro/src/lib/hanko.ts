@@ -13,40 +13,19 @@ import { HankoServer } from "@saeris/hanko";
 import { MemoryDeviceGrantStore } from "@saeris/hanko/stores/memory";
 
 /**
- * Origin the QR points at.
+ * Fallback origin, used only when a request carries no forwarded headers.
  *
- * It has to be an absolute URL a DIFFERENT device can resolve. A QR encoding
- * `localhost` is useless to the phone scanning it, which is the single easiest
- * way to make this demo look broken — so the value is chosen in order of how
- * likely it is to be reachable:
- *
- * 1. `HANKO_ORIGIN` — set this for a tunnel, where only you know the URL.
- * 2. `PORTLESS_URL` — injected by `portless run`, correct without configuring
- *    anything.
- * 3. `localhost` — right for a single-machine run, and honest about being
- *    useless to a second device. Deliberately NOT a plausible-looking LAN
- *    hostname: a default that points somewhere unreachable fails silently,
- *    which is worse than one that is obviously local.
+ * The real origin is derived PER REQUEST from `x-forwarded-host` — see
+ * `createAuthorizationHandler`. That is what lets the same running server serve
+ * a correct QR on localhost, through a tunnel, and behind a LAN hostname
+ * without a restart or an environment variable.
  */
-export const ORIGIN =
-  process.env.HANKO_ORIGIN ??
-  process.env.PORTLESS_URL ??
-  `http://localhost:4321`;
-
-// Said once at boot rather than left to be discovered by a phone that scans a
-// QR and lands nowhere. A camera also refuses to open on a non-HTTPS origin, so
-// a localhost run cannot do the scan path at all.
-if (/localhost|127\.0\.0\.1/u.test(ORIGIN)) {
-  console.warn(
-    `[hanko] Origin is ${ORIGIN} — reachable only from this machine.\n` +
-      `        The QR will not work from a phone, and the camera needs HTTPS.\n` +
-      `        Run \`yarn demo:share\` and set HANKO_ORIGIN to the printed URL.`
-  );
-}
+export const FALLBACK_ORIGIN =
+  process.env.HANKO_ORIGIN ?? `http://localhost:4321`;
 
 export const hanko = new HankoServer({
   store: new MemoryDeviceGrantStore(),
-  verificationUri: `${ORIGIN}/link`,
+  verificationUri: `${FALLBACK_ORIGIN}/link`,
   // Short for a demo, so expiry is observable without waiting a quarter hour.
   // The RFC's own guidance is a window long enough to fetch a second device
   // and short enough to limit a phished code's value; 15 minutes is the
@@ -91,3 +70,19 @@ export const createSession = (subject: string): object => ({
   token_type: `Bearer`,
   subject
 });
+
+/**
+ * Public origin a request actually arrived on.
+ *
+ * Mirrors what `createAuthorizationHandler` does internally, for the pages that
+ * create grants directly rather than through the endpoint. `x-forwarded-host`
+ * first, because behind a proxy `Astro.url` carries the internal host the proxy
+ * forwarded to, not the one the phone will visit.
+ */
+export const originOf = (request: Request, url: URL): string => {
+  const host = request.headers.get(`x-forwarded-host`)?.split(`,`)[0]?.trim();
+  if (host === undefined || host.length === 0) return url.origin;
+
+  const proto = request.headers.get(`x-forwarded-proto`)?.split(`,`)[0]?.trim();
+  return `${proto === undefined || proto.length === 0 ? `https` : proto}://${host}`;
+};

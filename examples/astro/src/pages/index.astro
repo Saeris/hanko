@@ -1,6 +1,11 @@
 ---
 import Base from "../layouts/Base.astro";
-import { ORIGIN } from "../lib/hanko.js";
+import { originOf } from "../lib/hanko.js";
+
+// Derived from this request, so it reports the host the browser actually
+// reached rather than whatever the server was configured with at boot.
+const origin = originOf(Astro.request, Astro.url);
+const isLocal = /localhost|127\.0\.0\.1/u.test(origin);
 ---
 
 <Base title="hanko demo" surface="phone">
@@ -27,10 +32,13 @@ import { ORIGIN } from "../lib/hanko.js";
         </li>
       </ol>
 
-      <p class="note">
-        Serving from <code>{ORIGIN}</code>. The QR encodes this origin, so it
-        has to be a host the phone can reach — <code>localhost</code> in a QR is
-        useless to another device.
+      <p class="note" data-tone={isLocal ? `warn` : `ok`}>
+        Serving from <code>{origin}</code>.{` `}
+        {
+          isLocal
+            ? `A phone cannot reach this, and the camera needs HTTPS — run \`yarn demo:share\` and open the printed URL.`
+            : `Open this same URL on your phone; the QR is built from it automatically.`
+        }
       </p>
     </section>
   </main>
@@ -78,6 +86,14 @@ import { ORIGIN } from "../lib/hanko.js";
     font-size: 0.85rem;
     color: var(--ink-dim);
     line-height: 1.5;
+  }
+  /* Says at a glance whether the current URL can reach a phone — the one
+     precondition that makes everything else fail silently. */
+  .note[data-tone="warn"] code {
+    color: var(--bad);
+  }
+  .note[data-tone="ok"] code {
+    color: var(--ok);
   }
   code {
     color: var(--ink);

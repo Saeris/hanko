@@ -156,10 +156,21 @@ export class HankoServer {
    */
   async requestAuthorization({
     clientId,
-    scope
+    scope,
+    verificationUri = this.#verificationUri
   }: {
     clientId?: string;
     scope?: string;
+    /**
+     * Override the configured verification URI for this grant.
+     *
+     * One deployment is commonly reachable through several hostnames — a
+     * preview URL, a custom domain, a tunnel — and the QR has to encode the one
+     * the device is actually talking to. Derive it from the incoming request
+     * (`x-forwarded-host` behind a proxy) and the code always points somewhere
+     * reachable, with no redeploy when the hostname changes.
+     */
+    verificationUri?: string;
   } = {}): Promise<DeviceAuthorizationResponse> {
     const displayCode = generateUserCode(this.#userCodeOptions);
     const record: DeviceGrant = {
@@ -179,10 +190,10 @@ export class HankoServer {
       device_code: record.device_code,
       // The DISPLAY form goes on the wire — the device shows it verbatim.
       user_code: displayCode,
-      verification_uri: this.#verificationUri,
+      verification_uri: verificationUri,
       verification_uri_complete: this.#buildVerificationUriComplete(
         displayCode,
-        this.#verificationUri
+        verificationUri
       ),
       expires_in: this.#expiresInSeconds,
       interval: this.#intervalSeconds

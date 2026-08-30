@@ -1,12 +1,20 @@
 ---
 import { renderDeviceQr } from "@saeris/hanko";
 import Base from "../layouts/Base.astro";
-import { hanko } from "../lib/hanko.js";
+import { hanko, originOf } from "../lib/hanko.js";
 
 // Started server-side so the screen paints with a code already on it. Doing
 // this in the browser would show an empty panel for a round trip, which on a
 // TV reads as the app having failed to load.
-const grant = await hanko.requestAuthorization({ clientId: `taproom-tv` });
+//
+// The verification URI comes from THIS request's origin, so the QR always
+// points at the host the browser actually reached — localhost, a tunnel, or a
+// LAN name — with no restart and no environment variable. Astro's `site` is
+// unset here deliberately; `Astro.url` already reflects the forwarded host.
+const grant = await hanko.requestAuthorization({
+  clientId: `taproom-tv`,
+  verificationUri: `${originOf(Astro.request, Astro.url)}/link`
+});
 
 const qr = renderDeviceQr(grant.verification_uri_complete!, {
   size: 340,
