@@ -13,7 +13,7 @@ yarn bumpy add
 Non-interactive (one bump per PR):
 
 ```bash
-yarn bumpy add --packages "valimock:patch" --message "Description of changes" --name "my-change"
+yarn bumpy add --packages "@saeris/hanko:patch" --message "Description of changes" --name "my-change"
 ```
 
 For PRs that don't need a release (docs, CI):

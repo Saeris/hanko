@@ -1303,20 +1303,29 @@ __metadata:
   resolution: "@saeris/hanko-example-astro@workspace:examples/astro"
   dependencies:
     "@astrojs/node": "npm:^11.1.0"
-    "@saeris/hanko": "workspace:*"
+    "@saeris/hanko": "link:../.."
     "@types/node": "npm:^25.9.1"
     astro: "npm:~7.2.2"
   languageName: unknown
   linkType: soft
 
-"@saeris/hanko@workspace:*, @saeris/hanko@workspace:packages/hanko":
+"@saeris/hanko@link:../..::locator=%40saeris%2Fhanko-example-astro%40workspace%3Aexamples%2Fastro":
   version: 0.0.0-use.local
-  resolution: "@saeris/hanko@workspace:packages/hanko"
+  resolution: "@saeris/hanko@link:../..::locator=%40saeris%2Fhanko-example-astro%40workspace%3Aexamples%2Fastro"
+  languageName: node
+  linkType: soft
+
+"@saeris/hanko@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "@saeris/hanko@workspace:."
   dependencies:
     "@saeris/configs": "npm:1.6.1"
     "@types/node": "npm:^25.9.1"
+    "@varlock/bumpy": "npm:^1.7.0"
     etiket: "npm:^0.12.0"
+    typescript: "npm:^6.0.3"
     vite-plus: "npm:0.2.9"
+    vitest: "npm:4.1.10"
   peerDependencies:
     barcode-detector: ">=3"
   peerDependenciesMeta:
@@ -2733,19 +2742,6 @@ __metadata:
   checksum: 10/8a13eef49f076eedf1aa6b32ab9190c647cbae517ed2945c951905ef018e2949dd0baa73d0954dc17eaf432d1657e3a09a10ebe5ac5532365083d3560d17d8b5
   languageName: node
   linkType: hard
-
-"hanko-workspace@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "hanko-workspace@workspace:."
-  dependencies:
-    "@saeris/configs": "npm:1.6.1"
-    "@types/node": "npm:^25.9.1"
-    "@varlock/bumpy": "npm:^1.7.0"
-    typescript: "npm:^6.0.3"
-    vite-plus: "npm:0.2.9"
-    vitest: "npm:4.1.10"
-  languageName: unknown
-  linkType: soft
 
 "hast-util-to-html@npm:^9.0.5":
   version: 9.0.5

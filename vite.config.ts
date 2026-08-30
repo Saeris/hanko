@@ -1,9 +1,7 @@
 import { defineConfig } from "vite-plus";
 import { lint, fmt } from "@saeris/configs";
+import manifest from "./package.json" with { type: "json" };
 
-// Root config for the workspace. Each package carries its own `pack` and
-// `test` config; this one only supplies the shared lint and format rules so
-// `vp check` at the root covers every workspace uniformly.
 export default defineConfig({
   lint: {
     ...lint,
@@ -22,5 +20,29 @@ export default defineConfig({
       "**/.astro/**",
       "**/dist/**"
     ]
+  },
+  // ── Builds (tsdown) ─────────────────────────────────────────────────
+  pack: {
+    entry: [
+      manifest.exports["."].import.development,
+      manifest.exports["./client"].import.development,
+      manifest.exports["./approve"].import.development,
+      manifest.exports["./handlers"].import.development,
+      manifest.exports["./stores/memory"].import.development,
+      manifest.exports["./stores/kv"].import.development
+    ],
+    clean: true,
+    format: [`esm`],
+    dts: true,
+    outDir: `./dist`
+  },
+  // ── Testing (Vitest) ────────────────────────────────────────────────
+  test: {
+    name: manifest.name,
+    globals: true,
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    exclude: ["**/node_modules/**", "**/dist/**"],
+    environment: "node",
+    passWithNoTests: true
   }
 });

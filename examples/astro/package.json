@@ -12,8 +12,9 @@
     "build": "astro build",
     "preview": "astro preview"
   },
+  "_comment": "`link:` rather than `workspace:*` because the library IS the repo root. Yarn does not symlink a workspace root into node_modules — it is the project, not a dependency of itself — and without a symlink the bundler cannot resolve subpath exports like `@saeris/hanko/handlers`. The link restores normal `exports` resolution, so this demo consumes the published surface rather than reaching into src/.",
   "dependencies": {
-    "@saeris/hanko": "workspace:*",
+    "@saeris/hanko": "link:../..",
     "astro": "~7.2.2"
   },
   "devDependencies": {

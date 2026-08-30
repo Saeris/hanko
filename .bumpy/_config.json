@@ -4,7 +4,7 @@
   "changelog": "github",
   "githubRelease": true,
   "packages": {
-    "valimock": {
+    "@saeris/hanko": {
       "buildCommand": "vp pack"
     }
   }

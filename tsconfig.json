@@ -1,4 +1,10 @@
 {
-  "files": [],
-  "references": [{ "path": "./packages/hanko" }, { "path": "./examples/astro" }]
+  "extends": "@saeris/configs/tsconfig",
+  "include": ["src/**/*.ts", "*.ts"],
+  "exclude": ["node_modules", "dist", "examples"],
+  "compilerOptions": {
+    // project-local paths live here, not in the shared base
+    "outDir": "./dist",
+    "rootDir": "."
+  }
 }
