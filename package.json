@@ -91,14 +91,6 @@
   "dependencies": {
     "etiket": "^0.12.0"
   },
-  "peerDependencies": {
-    "barcode-detector": ">=3"
-  },
-  "peerDependenciesMeta": {
-    "barcode-detector": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@saeris/configs": "1.6.1",
     "@types/node": "^25.9.1",

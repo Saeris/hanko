@@ -1,19 +1,28 @@
 /**
  * QR reading for the approving device.
  *
- * Generation is dependency-free; decoding cannot be. hanko therefore targets
- * the WEB STANDARD — `BarcodeDetector` — and lets the host supply the
- * implementation:
+ * Generation is dependency-free; decoding cannot be. hanko defines the
+ * {@link QrScanner} interface — two methods — and lets the host bring a
+ * decoder rather than picking one for everybody.
  *
- * - Chrome / Android ship it natively: install nothing.
- * - Elsewhere, the `barcode-detector` ponyfill (ZXing-C++ via WASM) provides
- *   the same API. An optional peer dependency, so hosts that do not scan never
- *   pay for it.
- * - React Native has no `BarcodeDetector`; `expo-camera` scans instead, and
- *   satisfies {@link QrScanner} in a few lines.
+ * That indirection is not ceremony. `BarcodeDetector` looks like the obvious
+ * answer and is NOT a web standard: it is a WICG incubation that MDN flags as
+ * outside Baseline, Safari has never shipped it, and no vendor has committed
+ * to it. Building against it directly means the scanner silently does nothing
+ * on an iPhone — the device most people approve from.
  *
- * Targeting the standard rather than a library means the native path costs
- * nothing and the fallback is swappable.
+ * What works today, in rough order of preference:
+ *
+ * - **`qr-scanner`** — ~6 kB gzipped, self-contained, uses a native
+ *   `BarcodeDetector` where one exists and its own worker otherwise. It owns
+ *   the camera too, which is most of the work. See the Astro example.
+ * - **`barcode-detector`** — a ponyfill over ZXing-C++/WASM. More formats and
+ *   actively maintained, but it fetches its WASM from a CDN at runtime, which
+ *   is a poor default on an authentication screen.
+ * - **`expo-camera`** on React Native, where no web API exists at all.
+ *
+ * {@link createBarcodeDetectorScanner} remains for the native path and for
+ * ponyfills mirroring that API.
  */
 
 /** Minimal shape of a detected barcode. Mirrors the Barcode Detection API. */

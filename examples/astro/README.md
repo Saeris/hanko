@@ -228,9 +228,11 @@ modest hardware.
 - **Sessions live in memory**, so they die with the process and are not shared
   between instances. Revocation is genuinely enforced, but only within one
   server; put them in the same store as the grants for anything real.
-- **The QR scanner bundles a WASM ponyfill.** Safari has never shipped
-  `BarcodeDetector`, so on an iPhone the ponyfill is the implementation rather
-  than a fallback. It is imported dynamically, so only a page that opens a
-  camera pays for it.
+- **The QR scanner uses [`qr-scanner`][qr-scanner]**, not the native
+  `BarcodeDetector` — that API is a WICG incubation Safari has never shipped,
+  so on an iPhone it decodes nothing. `qr-scanner` is ~6 kB gzipped, falls back
+  to its own worker where no native detector exists, and is imported
+  dynamically so only a page that opens a camera pays for it.
 
 [portless]: https://github.com/vercel-labs/portless
+[qr-scanner]: https://github.com/nimiq/qr-scanner

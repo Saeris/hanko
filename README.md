@@ -170,25 +170,43 @@ attempt, and they must always be able to say no.
 
 ### Reading QR codes
 
-hanko targets the standard `BarcodeDetector` API rather than a decoder library,
-so the native path costs nothing and the fallback is swappable:
+hanko defines a two-method `QrScanner` interface and lets you bring a decoder.
+It deliberately does not pick one for you.
+
+**`BarcodeDetector` is not a web standard.** It is a WICG incubation that MDN
+flags as outside Baseline; Safari has never shipped it, and no vendor has
+committed to it. Building against it directly means the scanner silently does
+nothing on an iPhone — the device most people approve from.
+
+The recommendation is [`qr-scanner`][qr-scanner]: ~6 kB gzipped,
+self-contained, and it uses a native `BarcodeDetector` where one exists and its
+own worker otherwise. It owns the camera too, which is most of the work.
 
 ```ts
-import {
-  createBarcodeDetectorScanner,
-  hasNativeBarcodeDetector
-} from "@saeris/hanko/approve";
+import QrScanner from "qr-scanner";
+import { parseApprovalLink } from "@saeris/hanko/approve";
 
-// Chrome / Android: native, no install
-const scanner = createBarcodeDetectorScanner();
-
-// Everywhere else: the ponyfill (ZXing-C++ via WASM), an OPTIONAL peer dep
-import { BarcodeDetector } from "barcode-detector/ponyfill";
-const scanner = createBarcodeDetectorScanner({ detector: BarcodeDetector });
+const scanner = new QrScanner(
+  videoElement,
+  ({ data }) => {
+    const link = parseApprovalLink(data);
+    if (link) void client.submitCode(link.userCode);
+  },
+  { preferredCamera: `environment`, maxScansPerSecond: 10 }
+);
+await scanner.start();
 ```
 
-React Native has no `BarcodeDetector`; `expo-camera` satisfies `QrScanner`
-directly:
+Alternatives, and what they cost:
+
+| Decoder                  | Size         | Note                                                     |
+| ------------------------ | ------------ | -------------------------------------------------------- |
+| `qr-scanner`             | ~6 kB gz     | self-contained, manages the camera                       |
+| `barcode-detector`       | ~1.5 MB WASM | more formats, but fetches its WASM from a CDN at runtime |
+| native `BarcodeDetector` | 0            | absent on Safari; use `createBarcodeDetectorScanner()`   |
+| `expo-camera`            | —            | React Native, where no web API exists                    |
+
+Anything satisfying `QrScanner` works, including a React Native camera:
 
 ```ts
 const scanner: QrScanner = {
@@ -196,8 +214,9 @@ const scanner: QrScanner = {
 };
 ```
 
-Scanning is restricted to `qr_code`. A beer can's EAN-13 in the same frame would
-otherwise be posted to your approval endpoint as though it were a user code.
+`createBarcodeDetectorScanner` restricts detection to `qr_code`. An EAN-13 in
+the same frame would otherwise be posted to your approval endpoint as though it
+were a user code.
 
 ### Confirmation challenges
 
@@ -556,3 +575,4 @@ MIT © [Drake Costa](https://saeris.gg)
 [rfc-token]: https://datatracker.ietf.org/doc/html/rfc8628#section-3.5
 [rfc-security]: https://datatracker.ietf.org/doc/html/rfc8628#section-5
 [etiket]: https://github.com/productdevbook/etiket
+[qr-scanner]: https://github.com/nimiq/qr-scanner
