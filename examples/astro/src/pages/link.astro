@@ -341,6 +341,24 @@ const subject = authenticate(Astro.request);
 
       qrScanner = scannerInstance;
 
+      /**
+       * Try both polarities, not just dark-on-light.
+       *
+       * The live camera path defaults to `dontInvert` — only the static
+       * `scanImage` helper sets `both`. Our own device screen renders light
+       * modules on a dark panel (Plex's look), so the default silently never
+       * matches: camera running, worker alive, decode loop spinning, no result
+       * ever. iOS's built-in camera reads the same code fine, which is what
+       * makes this look like a broken scanner rather than a wrong setting.
+       *
+       * Verified with the engine qr-scanner wraps: the /tv QR fails under
+       * `dontInvert` and decodes under `attemptBoth`.
+       *
+       * The cost is one extra binarization pass per frame, which is worth it
+       * for a scanner that has to read whatever a host renders.
+       */
+      scannerInstance.setInversionMode(`both`);
+
       try {
         await scannerInstance.start();
 
