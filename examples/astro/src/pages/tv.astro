@@ -358,12 +358,10 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
 
   .qr {
     display: grid;
-    padding: clamp(0.6rem, 1vw, 1rem);
-    border-radius: 12px;
-    background: var(--ground);
-    /* The quiet zone is part of the symbol. Without the border the panel
-       gradient bleeds into it and scan rate drops at distance. */
-    border: 1px solid var(--line);
+    /* No tile, padding, or border: `renderDeviceQr` paints an opaque
+       background across the whole symbol, quiet zone included, so there is
+       nothing for the panel gradient to bleed into. A wrapper here would draw
+       a visible box around a QR that already provides its own margin. */
   }
 
   .qr :global(svg) {
