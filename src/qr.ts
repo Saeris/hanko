@@ -29,16 +29,19 @@ export interface DeviceQrOptions {
    * Do not make this transparent to sit the QR on a dark or photographic
    * backdrop — scanners need the quiet zone to contrast with the modules.
    *
-   * Inverting (light modules on a dark ground, as Plex does) is legible to
-   * some readers and INVISIBLE to others: many decoders binarize assuming
-   * dark-on-light and never try the opposite. jsQR — the engine behind
-   * qr-scanner — defaults its live camera path to `dontInvert`, so an
+   * Inverting (light modules on a dark ground, as Plex does) is a constraint
+   * on READERS, and is not a contrast question — an inverted symbol can sit
+   * at 10:1 and still be unreadable. Many decoders binarize assuming dark
+   * modules on a light ground and never try the opposite: jsQR, the engine
+   * behind qr-scanner, defaults its live camera path to `dontInvert`, so an
    * inverted symbol decodes as nothing at all while the camera looks
-   * perfectly healthy. iOS's built-in camera reads it, which makes the
-   * failure look like a broken scanner rather than a polarity mismatch.
+   * perfectly healthy. Apple's detector tries both, so the iOS camera reads
+   * what your own scanner cannot — which makes this look like a broken
+   * scanner rather than a polarity mismatch.
    *
-   * So: invert only if you control every reader, and configure them for it.
-   * Default to dark-on-light.
+   * So invert deliberately, not by accident: it is fine when you control the
+   * readers and have configured them for it (see `setInversionMode`), and a
+   * silent failure when you have not.
    */
   background?: string;
   /** Quiet-zone width in modules. The spec minimum is 4; do not go below it. */

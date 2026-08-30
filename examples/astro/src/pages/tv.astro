@@ -35,16 +35,20 @@ const qr =
     ? null
     : renderDeviceQr(grant.verification_uri_complete!, {
         size: 340,
-        // Dark modules on a light tile, even though the panel is dark.
+        // Light modules on the dark panel — Plex's look, and deliberate.
         //
-        // Plex's inverted look was the original here, and it is why the
-        // scanner never worked: jsQR's camera path assumes dark-on-light and
-        // does not try the other polarity unless told to. The approving page
-        // now sets `both`, but a QR is scanned by whatever reader the user
-        // brings, and most of them make the same assumption. The tile below
-        // keeps it readable against the dark panel.
-        color: `#160c1e`,
-        background: `#f5f0e6`
+        // This is an INVERTED symbol, which is a real constraint on readers,
+        // not a contrast problem: at 10.2:1 these two are more than
+        // distinguishable enough. jsQR binarizes assuming dark modules on a
+        // light ground, so under its camera default (`dontInvert`) this
+        // decodes as nothing at all. The approving page sets
+        // `setInversionMode('both')`, and Apple's detector tries both, so the
+        // two readers that matter here handle it.
+        //
+        // Keep the two in step: rendering inverted is only safe while the
+        // scanner is configured for it.
+        color: `#f0b429`,
+        background: `#160c1e`
       });
 
 // Shown without the scheme: the user is retyping this from across a room, and
@@ -356,10 +360,9 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
     display: grid;
     padding: clamp(0.6rem, 1vw, 1rem);
     border-radius: 12px;
-    /* Light tile, matching the QR's own background: the quiet zone is part
-       of the symbol, and the panel gradient bleeding into it costs scan rate
-       at distance. */
-    background: #f5f0e6;
+    background: var(--ground);
+    /* The quiet zone is part of the symbol. Without the border the panel
+       gradient bleeds into it and scan rate drops at distance. */
     border: 1px solid var(--line);
   }
 
