@@ -286,24 +286,29 @@ export const createQrDecoder = ({
       // either polarity, is enough to justify the retries. Retrying exists
       // precisely to rescue symbols the first pass reads badly, so this must
       // only reject frames where there is nothing to rescue.
-      if (findFinderPatterns(binarize(image)).length === 0) {
-        if (
-          findFinderPatterns(binarize(image, { invert: true })).length === 0
-        ) {
-          return null;
-        }
+      //
+      // Checked on the BLURRED image as well as the sharp one. Gating on the
+      // sharp pass alone rejected 24 of 718 corpus images outright, two of
+      // which a later pass decoded — concentrated in `damaged` and
+      // `perspective`, exactly the categories where the first binarization
+      // finds nothing and a retry rescues it. Blur is one cheap pass against
+      // the whole ladder, so this keeps nearly all of the saving.
+      const radius = Math.max(
+        2,
+        Math.round(Math.min(image.width, image.height) / 500)
+      );
+
+      const hasCandidate = (candidate: GrayImage): boolean =>
+        findFinderPatterns(binarize(candidate)).length > 0 ||
+        findFinderPatterns(binarize(candidate, { invert: true })).length > 0;
+
+      if (!hasCandidate(image) && !hasCandidate(blur(image, radius))) {
+        return null;
       }
 
       const offset = attempt(shifted(image));
       if (offset !== null || !retryBlurred) return offset;
 
-      // Radius scaled to the image rather than fixed: the aliasing frequency
-      // depends on how many sensor pixels cover one screen pixel, which
-      // depends on capture resolution.
-      const radius = Math.max(
-        2,
-        Math.round(Math.min(image.width, image.height) / 500)
-      );
       return attempt(blur(image, radius));
     }
   };
