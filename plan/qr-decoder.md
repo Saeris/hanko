@@ -153,18 +153,34 @@ Per category, and what each number is telling us:
 
 ### What is known about the remaining failures
 
-**`high_version` (0%)** — diagnosed, not guessed. On `image003` the sampled
-grid reproduces the top-left finder **49/49 modules correctly**, and format
-and version both read cleanly (v40, ecLevel M, mask 3) — so location, size
-and the fourth corner are all right. The timing pattern then alternates
-perfectly for 24 modules and breaks: `#.#.#.#.#.#.#.#.#.#.#.#.###.##`.
+**`high_version` (0%)** — extensively diagnosed, still unsolved. Four
+hypotheses have been tested and disproved, which is worth recording in full
+because each looked obviously correct beforehand.
 
-That is cumulative perspective error across 177 modules, and one fourth-corner
-anchor cannot correct it. Two hypotheses were tested and disproved first:
-neighbouring grid sizes (none decode) and single-alignment refinement (already
-implemented; ZXing uses only one anchor too). The fix is piecewise sampling —
-several alignment patterns fitting local transforms per region — which is a
-larger change than anything here so far.
+What is definitely RIGHT on `image003` (a version 40, 177-module symbol):
+the sampled grid reproduces the top-left finder **49/49 modules**, format and
+version read cleanly (v40, ecLevel M, mask 3), the data region yields exactly
+3706 codewords in exactly 49 blocks — every structural number the spec
+predicts. What is wrong: **all 49 blocks are beyond Reed-Solomon repair.**
+
+Disproved:
+
+1. *Wrong grid size.* Every neighbouring size (±12 modules) was tried; none
+   decode.
+2. *Fourth corner misplaced.* A 7x7 search over corner positions, scored by
+   how well the sampled timing pattern alternates, recovered nothing.
+3. *Cumulative perspective drift.* Measuring predicted against actual module
+   boundaries along the timing row shows drift that OSCILLATES (-0.59, +0.44,
+   -0.31, +0.52, +0.34, +0.02 modules) rather than accumulating. Perspective
+   error would grow smoothly in one direction.
+4. *Sub-pixel sampling jitter.* Majority-vote sampling at radius 0, 1 and 2
+   makes no difference at all — 0/12 in every case.
+
+Structure perfect, content noise, error distributed across every block rather
+than concentrated. That points at something systematic in how modules are
+read at this scale rather than at any one geometric stage, and none of the
+obvious candidates survives contact with the data. Left open rather than
+guessed at further.
 
 **`glare` (3.6%)** and **`perspective` (9.3%)** are untouched so far.
 
