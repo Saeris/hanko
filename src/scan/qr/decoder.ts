@@ -14,7 +14,11 @@
 
 import { binarize, blur } from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
-import { locateAlignmentGrid, refineBottomRight } from "./alignment.js";
+import {
+  estimateCornerFromEdges,
+  locateAlignmentGrid,
+  refineBottomRight
+} from "./alignment.js";
 import { decodeMatrix } from "./decode-matrix.js";
 import {
   findFinderPatterns,
@@ -94,24 +98,49 @@ const decodeBinarized = (
   // percent error there is more than a module of drift — every module in that
   // region samples its neighbour. It is why `high_version` images locate
   // perfectly and decode not at all.
-  const bottomRight = refineBottomRight(
-    matrix,
-    rough,
-    finders,
-    size,
-    version,
+  const moduleSize =
+    (finders.topLeft.moduleSize +
+      finders.topRight.moduleSize +
+      finders.bottomLeft.moduleSize) /
+    3;
+
+  // Three candidates for the fourth corner, tried in order of how much they
+  // are trusted. Measured against a reference decoder, this one point is the
+  // largest error in the pipeline: supplying a correct corner takes
+  // `perspective` from 2 of 23 images to 7, `glare` from 2 of 17 to 7, and
+  // `curved` from 18 of 36 to 27.
+  //
+  // Trying several rather than picking one is cheap — each attempt is a
+  // sample and a decode, and a wrong grid fails fast at the format check —
+  // and no single method wins everywhere: the alignment pattern is exact when
+  // present and absent on small or damaged symbols, edge-following handles
+  // perspective but needs a clean quiet zone, and the parallelogram is a poor
+  // estimate that never fails outright.
+  const candidates = [
+    refineBottomRight(matrix, rough, finders, size, version, estimated),
+    estimateCornerFromEdges(matrix, finders, moduleSize, estimated),
     estimated
-  );
+  ];
 
-  const transform =
-    bottomRight === estimated
-      ? rough
-      : transformForSymbol(finders, size, bottomRight);
+  let transform = rough;
+  let sampled = sampleGrid(matrix, rough, size);
+  let decoded = sampled === null ? null : decodeMatrix(sampled);
 
-  const sampled = sampleGrid(matrix, transform, size);
+  for (const corner of candidates) {
+    if (decoded !== null) break;
+    const candidateTransform = transformForSymbol(finders, size, corner);
+    const candidateGrid = sampleGrid(matrix, candidateTransform, size);
+    if (candidateGrid === null) continue;
+
+    const candidateDecode = decodeMatrix(candidateGrid);
+    if (candidateDecode !== null) {
+      transform = candidateTransform;
+      sampled = candidateGrid;
+      decoded = candidateDecode;
+    }
+  }
+
   if (sampled === null) return null;
-
-  let decoded = decodeMatrix(sampled);
 
   // Flat sampling failed. On a large symbol that usually means the surface is
   // not flat: a page bows, and one homography models a plane. Measured on a
@@ -123,12 +152,6 @@ const decodeBinarized = (
   // locating them measures the warp directly and each cell gets a transform
   // fitted to its own corners.
   if (decoded === null && version >= 7) {
-    const moduleSize =
-      (finders.topLeft.moduleSize +
-        finders.topRight.moduleSize +
-        finders.bottomLeft.moduleSize) /
-      3;
-
     const grid = locateAlignmentGrid(
       matrix,
       transform,
