@@ -55,6 +55,28 @@ export interface QrDecoderOptions {
   polarity?: `both` | `dark-on-light` | `light-on-dark`;
 
   /**
+   * Milliseconds to spend before giving up, or `0` for no limit.
+   *
+   * The retry ladder is what reads difficult images, and it is priced for a
+   * still photograph rather than a viewfinder. Measured on 1024x768 frames, a
+   * symbol that decodes costs 12 to 32ms while one that cannot be read at all
+   * costs 570 to 700 — roughly 25 times more, and the early exit cannot help
+   * because a finder pattern genuinely is present.
+   *
+   * That asymmetry is backwards for a camera: the expensive case happens
+   * exactly when someone is holding the phone at a bad angle and moving it, so
+   * a scanner that reads 43% of stills would stutter at under two frames a
+   * second precisely when the user is trying to line up a shot. The next frame
+   * is nearly free and probably better, so spending 700ms on this one is a bad
+   * trade in a live loop and a good one for a single still.
+   *
+   * Defaults to 120ms, which fits comfortably inside a frame at 5 scans per
+   * second. Set `0` when decoding a still image, where the whole ladder is
+   * worth running.
+   */
+  timeBudgetMs?: number;
+
+  /**
    * Retry with a low-pass filter when the sharp pass finds nothing.
    *
    * On by default, and it is what makes a code on a SCREEN readable: moire
@@ -262,7 +284,8 @@ const decodeBinarized = (
  */
 export const createQrDecoder = ({
   polarity = `both`,
-  retryBlurred = true
+  retryBlurred = true,
+  timeBudgetMs = 120
 }: QrDecoderOptions = {}): SymbolDecoder => {
   const attempt = (image: GrayImage): DecodedSymbol | null => {
     // Local binarization first, then global. Neither dominates: local follows
@@ -333,6 +356,12 @@ export const createQrDecoder = ({
 
   return {
     decode: (image: GrayImage): DecodedSymbol | null => {
+      // Measured from the first pass rather than before it, so a budget can
+      // never prevent the cheapest attempt from running at all.
+      const started = performance.now();
+      const spent = (): boolean =>
+        timeBudgetMs > 0 && performance.now() - started > timeBudgetMs;
+
       const sharp = attempt(image);
       if (sharp !== null) return sharp;
 
@@ -372,9 +401,11 @@ export const createQrDecoder = ({
         return null;
       }
 
+      if (spent()) return null;
       const offset = attempt(shifted(image));
       if (offset !== null) return offset;
 
+      if (spent()) return null;
       const blurred = attempt(blur(image, radius));
       if (blurred !== null || !retryBlurred) return blurred;
 
@@ -391,6 +422,7 @@ export const createQrDecoder = ({
       if (Math.min(image.width, image.height) < 600) return null;
 
       for (const factor of [2, 3]) {
+        if (spent()) return null;
         const smaller = attempt(downscale(image, factor));
         if (smaller !== null) return smaller;
       }
