@@ -15,6 +15,7 @@
 import { binarize, binarizeGlobal, blur, close } from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
 import {
+  alignmentCentersFor,
   estimateCornerFromEdges,
   locateAlignmentGrid,
   refineBottomRight
@@ -29,6 +30,7 @@ import {
   applyTransform,
   estimateBottomRight,
   estimateSize,
+  refineTransform,
   samplePiecewise,
   sampleGrid,
   transformForSymbol
@@ -146,6 +148,34 @@ const decodeBinarized = (
   }
 
   if (sampled === null) return null;
+
+  // Still nothing. Search for a better transform rather than computing one.
+  //
+  // Repeatedly across this corpus, symbols located correctly to within a
+  // module still failed to decode, and no single corner estimate fixed them —
+  // a brute-force corner search recovered only 4 of 15 perspective images.
+  // The missing piece was never a better formula but a way to tell "better"
+  // from "worse" without knowing the answer, which `scoreTransform` supplies:
+  // a QR's finders, timing lines and alignment patterns sit at positions the
+  // standard fixes, so a transform can be graded by whether sampling those
+  // positions finds them.
+  if (decoded === null) {
+    const refined = refineTransform(
+      matrix,
+      transform,
+      size,
+      alignmentCentersFor(version)
+    );
+    const refinedGrid = sampleGrid(matrix, refined, size);
+    if (refinedGrid !== null) {
+      const refinedDecode = decodeMatrix(refinedGrid);
+      if (refinedDecode !== null) {
+        transform = refined;
+        sampled = refinedGrid;
+        decoded = refinedDecode;
+      }
+    }
+  }
 
   // Flat sampling failed. On a large symbol that usually means the surface is
   // not flat: a page bows, and one homography models a plane. Measured on a

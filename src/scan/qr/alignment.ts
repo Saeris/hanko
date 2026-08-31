@@ -74,6 +74,10 @@ const ALIGNMENT_CENTERS: ReadonlyArray<readonly number[]> = [
   [6, 30, 58, 86, 114, 142, 170]
 ];
 
+/** Every alignment centre coordinate for a version. */
+export const alignmentCentersFor = (version: number): readonly number[] =>
+  ALIGNMENT_CENTERS[version] ?? [];
+
 /**
  * The module coordinate of the alignment pattern nearest the far corner.
  *

@@ -197,6 +197,172 @@ export const estimateSize = (finders: FinderTriple): number | null => {
 };
 
 /**
+ * Score how well a transform explains the symbol it claims to describe.
+ *
+ * A QR contains structures whose positions are fixed by the standard: three
+ * finder patterns, two timing lines, and a grid of alignment patterns. If a
+ * transform is right, sampling those positions finds those structures. If it
+ * is slightly wrong, they blur or vanish — and the score falls off smoothly,
+ * which is what makes it usable as a search signal rather than a pass/fail
+ * check.
+ *
+ * Crucially this needs NO ground truth. It asks only whether the symbol is
+ * self-consistent under the proposed geometry, so it can drive a search on a
+ * live camera frame.
+ *
+ * Adapted from quirc's `fitness_all`, which is the same idea implemented in
+ * about 2700 lines of C for embedded use.
+ */
+export const scoreTransform = (
+  image: BitMatrix,
+  transform: Transform,
+  size: number,
+  alignmentCenters: readonly number[]
+): number => {
+  const span = size - 7;
+
+  /**
+   * Sample one module at nine points across its interior.
+   *
+   * A single centre sample is a coin flip when the transform is half a module
+   * out. Nine samples at 0.3/0.5/0.7 of the module's width turn that into a
+   * gradient: a slightly-wrong transform scores lower rather than randomly,
+   * and that gradient is what a search can follow.
+   */
+  const cell = (x: number, y: number): number => {
+    let score = 0;
+    for (const dy of [0.3, 0.5, 0.7]) {
+      for (const dx of [0.3, 0.5, 0.7]) {
+        const point = applyTransform(
+          transform,
+          (x + dx - 3.5) / span,
+          (y + dy - 3.5) / span
+        );
+        const px = Math.round(point.x);
+        const py = Math.round(point.y);
+        if (px < 0 || py < 0 || px >= image.width || py >= image.height) {
+          continue;
+        }
+        score += image.bits[py * image.width + px] === 1 ? 1 : -1;
+      }
+    }
+    return score;
+  };
+
+  /** The square ring `radius` modules out from a centre. */
+  const ring = (cx: number, cy: number, radius: number): number => {
+    let score = 0;
+    for (let i = 0; i < radius * 2; i++) {
+      score += cell(cx - radius + i, cy - radius);
+      score += cell(cx - radius, cy + radius - i);
+      score += cell(cx + radius, cy - radius + i);
+      score += cell(cx + radius - i, cy + radius);
+    }
+    return score;
+  };
+
+  // A finder is dark centre, dark ring, LIGHT ring, dark ring — so the middle
+  // ring is subtracted. Signs encode the structure being looked for.
+  const finder = (x: number, y: number): number =>
+    cell(x + 3, y + 3) +
+    ring(x + 3, y + 3, 1) -
+    ring(x + 3, y + 3, 2) +
+    ring(x + 3, y + 3, 3);
+
+  // An alignment pattern is dark centre, light ring, dark ring.
+  const alignment = (cx: number, cy: number): number =>
+    cell(cx, cy) - ring(cx, cy, 1) + ring(cx, cy, 2);
+
+  let score = 0;
+
+  // Timing patterns alternate, so the expected value flips each module.
+  for (let i = 0; i < size - 14; i++) {
+    const expected = (i & 1) === 1 ? 1 : -1;
+    score += cell(i + 7, 6) * expected;
+    score += cell(6, i + 7) * expected;
+  }
+
+  score += finder(0, 0);
+  score += finder(size - 7, 0);
+  score += finder(0, size - 7);
+
+  // Alignment patterns, skipping the row and column that overlap finders.
+  for (let i = 1; i + 1 < alignmentCenters.length; i++) {
+    score += alignment(6, alignmentCenters[i]);
+    score += alignment(alignmentCenters[i], 6);
+  }
+  for (let i = 1; i < alignmentCenters.length; i++) {
+    for (let j = 1; j < alignmentCenters.length; j++) {
+      score += alignment(alignmentCenters[i], alignmentCenters[j]);
+    }
+  }
+
+  return score;
+};
+
+/**
+ * Nudge a transform toward a better fit, keeping only improvements.
+ *
+ * Coordinate descent over the transform's eight free parameters, halving the
+ * step each pass. Cheap, derivative-free, and it cannot make things worse
+ * because a step is reverted unless it scores higher.
+ *
+ * This is what closes the loop that measurement kept pointing at: on the
+ * corpus, symbols repeatedly located correctly to within a module still
+ * failed to decode, and no single corner estimate fixed them. Rather than
+ * compute a better corner, this searches for one — the score says which
+ * direction is better without knowing the answer.
+ *
+ * From quirc's `jiggle_perspective`.
+ */
+export const refineTransform = (
+  image: BitMatrix,
+  transform: Transform,
+  size: number,
+  alignmentCenters: readonly number[]
+): Transform => {
+  const keys = [
+    `a11`,
+    `a12`,
+    `a13`,
+    `a21`,
+    `a22`,
+    `a23`,
+    `a31`,
+    `a32`
+  ] as const;
+
+  let current: Record<string, number> = { ...transform };
+  let best = scoreTransform(image, transform, size, alignmentCenters);
+
+  // Two percent of each parameter's own magnitude, so the step suits both the
+  // large translation terms and the small projective ones.
+  const steps = keys.map((key) => Math.abs(current[key]) * 0.02);
+
+  for (let pass = 0; pass < 5; pass++) {
+    for (const [index, key] of keys.entries()) {
+      for (const direction of [1, -1]) {
+        const previous = current[key];
+        current[key] = previous + steps[index] * direction;
+
+        const candidate = current as unknown as Transform;
+        const score = scoreTransform(image, candidate, size, alignmentCenters);
+
+        if (score > best) {
+          best = score;
+        } else {
+          current[key] = previous;
+        }
+      }
+    }
+
+    for (let i = 0; i < steps.length; i++) steps[i] *= 0.5;
+  }
+
+  return current as unknown as Transform;
+};
+
+/**
  * Sample using local transforms fitted per region — piecewise sampling.
  *
  * A single homography models a FLAT quadrilateral. A photographed QR is
