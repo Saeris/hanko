@@ -125,31 +125,43 @@ Measured on the 718-image BoofCV benchmark (`yarn corpus`).
 |                                   | rate      |
 | --------------------------------- | --------- |
 | jsQR (the incumbent, same images) | 24.8%     |
-| **this decoder**                  | **27.9%** |
 | ZXing (published)                 | 31.87%    |
+| **this decoder**                  | **36.4%** |
 | ZBar (published)                  | 38.95%    |
 | BoofCV (published)                | 60.69%    |
 
-Per category, and what each number is telling us:
+Per category, with what moved each one:
 
-| category     | rate  | note                             |
-| ------------ | ----- | -------------------------------- |
-| lots         | 87.5% |                                  |
-| shadows      | 63.2% | local binarization               |
-| brightness   | 50.0% | was 0% before local binarization |
-| pathological | 42.3% |                                  |
-| rotations    | 36.4% | was 2.3% before triple scoring   |
-| bright_spots | 36.4% |                                  |
-| nominal      | 34.4% |                                  |
-| noncompliant | 32.8% |                                  |
-| close        | 28.6% | was 4.8% before the blur retry   |
-| curved       | 28.4% |                                  |
-| blurred      | 26.4% |                                  |
-| monitor      | 20.0% | was 0% before the blur retry     |
-| damaged      | 14.6% |                                  |
-| perspective  | 9.3%  |                                  |
-| glare        | 3.6%  |                                  |
-| high_version | 0.0%  | see below                        |
+| category     | rate  | what got it there                         |
+| ------------ | ----- | ----------------------------------------- |
+| lots         | 87.5% | triple scoring                            |
+| brightness   | 78.6% | local binarization, then grid-shift retry |
+| shadows      | 63.2% | local binarization                        |
+| bright_spots | 54.5% | grid-shift retry                          |
+| nominal      | 45.6% | corner candidates, denoise                |
+| pathological | 42.3% |                                           |
+| curved       | 41.8% | corner candidates                         |
+| noncompliant | 41.8% |                                           |
+| blurred      | 39.6% | grid-shift retry                          |
+| rotations    | 38.6% | triple scoring                            |
+| close        | 28.6% | blur retry                                |
+| monitor      | 24.0% | blur retry, global binarizer              |
+| damaged      | 18.8% | denoise                                   |
+| glare        | 14.3% |                                           |
+| perspective  | 9.3%  |                                           |
+| high_version | 2.9%  |                                           |
+
+### Cost
+
+A retry ladder is what reads difficult images, and it is also what could make
+this useless in a camera loop — most frames a camera sees contain no code at
+all, so the FAILING path is the common one.
+
+An unguarded ladder cost 495 ms on a blank 720p frame, capping a scanner at
+two frames a second while finding nothing. An early exit — skip the retries
+when no finder candidate exists in either polarity, on either the sharp or
+the blurred image — brings that to 233 ms with no loss of recognition. Both
+figures are guarded by tests.
 
 ### What is known about the remaining failures
 
