@@ -12,7 +12,7 @@
  * removes an entire class of unexplainable failure.
  */
 
-import { binarize, binarizeGlobal, blur } from "../binarize.js";
+import { binarize, binarizeGlobal, blur, close } from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
 import {
   estimateCornerFromEdges,
@@ -66,11 +66,13 @@ export interface QrDecoderOptions {
 const decodeBinarized = (
   image: GrayImage,
   invert: boolean,
-  global = false
+  global = false,
+  denoise = false
 ): DecodedSymbol | null => {
-  const matrix = global
+  const binarized = global
     ? binarizeGlobal(image, { invert })
     : binarize(image, { invert });
+  const matrix = denoise ? close(binarized) : binarized;
 
   const patterns = findFinderPatterns(matrix);
   if (patterns.length < 3) return null;
@@ -210,15 +212,27 @@ export const createQrDecoder = ({
     // local thresholding invents structure in flat regions. zxing-cpp reached
     // the same conclusion — its issue #809 is an image its local binarizer
     // cannot read and its global one can.
-    for (const global of [false, true]) {
-      if (polarity !== `light-on-dark`) {
-        const normal = decodeBinarized(image, false, global);
-        if (normal !== null) return normal;
-      }
+    // Local then global binarization; each pass optionally denoised. Denoising
+    // is a morphological closing that fills light speckle inside dark regions
+    // — zxing-cpp #951 diagnoses an undetected symbol as exactly that, "white
+    // pixels inside the black square that disrupt their detection", since one
+    // stray pixel splits a finder's dark run in two and breaks the 1:1:3:1:1
+    // signature a human still sees perfectly well.
+    //
+    // Last in the ladder because it is the most destructive: closing erases
+    // real detail as readily as noise, so it must only run once everything
+    // gentler has failed.
+    for (const denoise of [false, true]) {
+      for (const global of [false, true]) {
+        if (polarity !== `light-on-dark`) {
+          const normal = decodeBinarized(image, false, global, denoise);
+          if (normal !== null) return normal;
+        }
 
-      if (polarity !== `dark-on-light`) {
-        const inverted = decodeBinarized(image, true, global);
-        if (inverted !== null) return inverted;
+        if (polarity !== `dark-on-light`) {
+          const inverted = decodeBinarized(image, true, global, denoise);
+          if (inverted !== null) return inverted;
+        }
       }
     }
 
@@ -262,6 +276,23 @@ export const createQrDecoder = ({
     decode: (image: GrayImage): DecodedSymbol | null => {
       const sharp = attempt(image);
       if (sharp !== null) return sharp;
+
+      // Bail before the expensive retries when the frame plainly holds no
+      // symbol. A camera loop sees far more empty frames than codes, and the
+      // full ladder costs about half a second on a 720p frame — enough to cap
+      // a scanner at two frames a second scanning nothing at all.
+      //
+      // The test is deliberately weak: a single finder candidate anywhere, in
+      // either polarity, is enough to justify the retries. Retrying exists
+      // precisely to rescue symbols the first pass reads badly, so this must
+      // only reject frames where there is nothing to rescue.
+      if (findFinderPatterns(binarize(image)).length === 0) {
+        if (
+          findFinderPatterns(binarize(image, { invert: true })).length === 0
+        ) {
+          return null;
+        }
+      }
 
       const offset = attempt(shifted(image));
       if (offset !== null || !retryBlurred) return offset;

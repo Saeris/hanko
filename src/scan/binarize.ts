@@ -137,6 +137,69 @@ export const binarizeGlobal = (
 };
 
 /**
+ * Morphological closing on a bit matrix — dilate, then erode.
+ *
+ * Fills small light specks inside dark regions while leaving real structure
+ * intact, because dilation closes a gap smaller than the kernel and the
+ * following erosion restores every boundary the dilation moved.
+ *
+ * The failure this targets is specific: zxing-cpp issue #951 diagnoses an
+ * undetected symbol as "white pixels inside the black square that disrupt
+ * their detection" of the finder patterns, and its remedy is exactly this
+ * operation. Speckle inside a finder breaks the run-length signature — a
+ * single light pixel splits one dark run into two — so the pattern stops
+ * matching 1:1:3:1:1 even though a human sees it perfectly well.
+ *
+ * A 3x3 kernel: large enough for sensor speckle and dust, small enough that
+ * it cannot close a real one-module gap at any usable resolution.
+ */
+export const close = (matrix: BitMatrix): BitMatrix => {
+  const { width, height } = matrix;
+  const dilated = new Uint8Array(width * height);
+  const output = new Uint8Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let any = 0;
+      for (let dy = -1; dy <= 1 && any === 0; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const px = x + dx;
+          const py = y + dy;
+          if (px < 0 || py < 0 || px >= width || py >= height) continue;
+          if (matrix.bits[py * width + px] === 1) {
+            any = 1;
+            break;
+          }
+        }
+      }
+      dilated[y * width + x] = any;
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let all = 1;
+      for (let dy = -1; dy <= 1 && all === 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const px = x + dx;
+          const py = y + dy;
+          // Outside the image counts as set, so erosion does not eat the
+          // border and shrink a symbol that runs to the frame edge.
+          if (px < 0 || py < 0 || px >= width || py >= height) continue;
+          if (dilated[py * width + px] === 0) {
+            all = 0;
+            break;
+          }
+        }
+      }
+      output[y * width + x] = all;
+    }
+  }
+
+  return { bits: output, width, height };
+};
+
+/**
  * Blur an image with a separable box filter, approximating a Gaussian.
  *
  * Two passes of a box filter — one horizontal, one vertical — is a standard
