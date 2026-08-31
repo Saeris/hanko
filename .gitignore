@@ -100,3 +100,8 @@ profiles/
 
 # Astro generated types and build output
 .astro/
+
+# Benchmark corpus, fetched on demand by `yarn corpus`. Never committed:
+# it is 251MB and published without a licence, so it is a development
+# tool rather than a dependency.
+.corpus/

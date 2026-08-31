@@ -87,13 +87,14 @@
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
-    "ci": "vp pack && vp check && vp test",
     "build": "vp pack",
     "check": "vp check",
-    "format": "vp check --fix",
-    "test": "vp test --fileParallelism",
+    "ci": "vp pack && vp check && vp test",
+    "corpus": "node scripts/fetch-corpus.mjs",
     "demo": "vp pack && yarn workspace @saeris/hanko-example-astro run dev",
-    "demo:share": "vp pack && yarn workspace @saeris/hanko-example-astro run share"
+    "demo:share": "vp pack && yarn workspace @saeris/hanko-example-astro run share",
+    "format": "vp check --fix",
+    "test": "vp test --fileParallelism"
   },
   "devDependencies": {
     "@saeris/configs": "1.6.1",

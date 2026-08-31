@@ -76,7 +76,6 @@ Kanji correctly returns `null` rather than guessing.
 Modules: `galois.ts`, `polynomial.ts`, `reed-solomon.ts`, `format.ts`,
 `mask.ts`, `blocks.ts`, `bitstream.ts`, `decode-matrix.ts`.
 
-
 Format/version decode, unmasking, de-interleaving, Reed-Solomon over GF(256),
 mode parsing (numeric, alphanumeric, byte; **not** Kanji/ECI — out of scope).
 
@@ -121,8 +120,19 @@ are what make the incumbents large and un-shakeable.
 
 ## Open questions
 
-1. Where does the photo corpus come from? Public datasets carry licence
-   constraints; shooting our own is slow but unambiguous.
+1. ~~Where does the photo corpus come from?~~ **Resolved.** The BoofCV QR
+   benchmark (`qrcodes_v4.zip`, assembled by Peter Abeles) — 718 photographs
+   across the same 16 categories the published comparisons use, with
+   hand-selected corner coordinates as ground truth, plus 54 decoding cases.
+
+   Fetched on demand by `yarn corpus` into a gitignored `.corpus/`, never
+   vendored. The archive is published as "freely available" with no stated
+   licence: `BoofCV-Data` is CC BY 4.0, but that is a different repository
+   covering 2011-2015 material, and this archive's own readme points at a
+   third-party site for some images. Fetching redistributes nothing and keeps
+   the published package free of third-party images — and 251 MB has no place
+   in a package arguing for a small footprint. Tests skip when it is absent.
+
 2. Does stage 1 alone justify shipping, paired with jsQR's locator, as a way
    to de-risk before stage 2 lands?
 3. Worker or no worker? etiket has no worker; a decoder on the main thread is
