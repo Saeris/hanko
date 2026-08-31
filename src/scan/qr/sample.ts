@@ -225,16 +225,29 @@ export const samplePiecewise = (
 ): BitMatrix | null => {
   const bits = new Uint8Array(size * size);
 
+  /**
+   * Which anchor cell governs a module coordinate.
+   *
+   * Coordinates outside the anchor span — the border strip before the first
+   * alignment pattern and after the last — are CLAMPED to the nearest cell
+   * rather than dropped to the global transform. On a version 40 symbol that
+   * strip is 13% of all modules, and handing that many to the warped global
+   * transform is more error than Reed-Solomon can absorb even when every
+   * interior module is right. A bow is locally smooth, so extending the
+   * neighbouring cell outward approximates it far better than a plane fitted
+   * across the whole symbol.
+   */
+  const cellFor = (m: number): number => {
+    for (let i = 0; i < positions.length - 1; i++) {
+      if (m >= positions[i] && m <= positions[i + 1]) return i;
+    }
+    return m < positions[0] ? 0 : positions.length - 2;
+  };
+
   /** The transform governing the cell containing this module coordinate. */
   const localTransform = (mx: number, my: number): Transform => {
-    // Find the anchor cell this module falls inside.
-    let col = -1;
-    let row = -1;
-    for (let i = 0; i < positions.length - 1; i++) {
-      if (mx >= positions[i] && mx <= positions[i + 1]) col = i;
-      if (my >= positions[i] && my <= positions[i + 1]) row = i;
-    }
-    if (col < 0 || row < 0) return fallback;
+    const col = cellFor(mx);
+    const row = cellFor(my);
 
     const topLeft = anchors[row]?.[col];
     const topRight = anchors[row]?.[col + 1];
@@ -262,12 +275,11 @@ export const samplePiecewise = (
         );
       } else {
         // Within a cell, coordinates are relative to that cell's own corners.
-        let col = 0;
-        let row = 0;
-        for (let i = 0; i < positions.length - 1; i++) {
-          if (x >= positions[i] && x <= positions[i + 1]) col = i;
-          if (y >= positions[i] && y <= positions[i + 1]) row = i;
-        }
+        // Outside the anchor span the ratio falls below 0 or above 1, which
+        // extrapolates the nearest cell's transform rather than clamping the
+        // sample — exactly what the border strip needs.
+        const col = cellFor(x);
+        const row = cellFor(y);
         const x0 = positions[col];
         const x1 = positions[col + 1];
         const y0 = positions[row];
