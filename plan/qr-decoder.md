@@ -177,10 +177,36 @@ Disproved:
    makes no difference at all — 0/12 in every case.
 
 Structure perfect, content noise, error distributed across every block rather
-than concentrated. That points at something systematic in how modules are
-read at this scale rather than at any one geometric stage, and none of the
-obvious candidates survives contact with the data. Left open rather than
-guessed at further.
+than concentrated.
+
+### What comparing against a working decoder established
+
+`zxing-wasm` decodes `image003` and reports its corner positions, which makes
+it a ground-truth oracle for every geometric stage. Diffing against it:
+
+- **Our finder location is correct.** Finder-centre distance 1140px against
+  ZXing's implied 1140px; module size 6.72 against 6.71; size 176.6 -> 177,
+  version 40. Every one of those matches.
+- **Our fourth-corner estimate is badly wrong**: ours (1312, 1458) against
+  ZXing's (1377, 1456) — about 13 modules out. The parallelogram assumption
+  fails hard on this symbol, and the earlier +/-3-module corner search was
+  simply too small a window to find it. Hypothesis 2 above was under-tested
+  rather than disproved.
+- **Fixing the corner is still not sufficient.** Sampling with ZXing's corner
+  gives a provably correct grid — all three finders 49/49 modules, horizontal
+  timing 1.00, vertical timing 0.98, alignment pattern 22/25, format and
+  version reading cleanly — and decoding STILL fails, with every block
+  reporting a Reed-Solomon locator at its maximum degree of 14. The modules
+  are saturated with errors even though the grid is right.
+- **`decodeMatrix` itself is not the problem.** Pure matrix round trips
+  against etiket succeed at every version up to 38 with no imaging involved.
+
+So there are two independent faults, and only the first is understood. The
+second shows up only on photographed large symbols: geometry verifiably
+correct, module values substantially wrong. The next thing to try is dumping
+our sampled matrix beside one reconstructed from ZXing's own decode and
+diffing module by module, which would say WHERE the wrong modules are rather
+than how many.
 
 **`glare` (3.6%)** and **`perspective` (9.3%)** are untouched so far.
 
