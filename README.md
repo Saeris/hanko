@@ -39,6 +39,17 @@ Native each bind it with their own conventions.
 yarn add @saeris/hanko
 ```
 
+hanko has **no runtime dependencies**. Its job is RFC 8628 — the grant
+lifecycle — and that is all it ships.
+
+Drawing a QR is a different class of problem, so it lives behind
+`@saeris/hanko/qr` and defers to [`etiket`](https://www.npmjs.com/package/etiket),
+declared as an optional peer. Add it only if you render the device screen:
+
+```sh
+yarn add etiket
+```
+
 ## Server
 
 hanko owns the grant lifecycle and nothing else. It never mints sessions or
@@ -73,7 +84,9 @@ await hanko.approve(userCode, session.userId);
 ### Rendering the screen
 
 ```ts
-import { renderDeviceQr } from "@saeris/hanko";
+// From the /qr subpath, not the barrel: this is the one entry point that
+// needs a dependency, and a server that only issues grants never pays for it.
+import { renderDeviceQr } from "@saeris/hanko/qr";
 
 const svg = renderDeviceQr(grant.verification_uri_complete, { size: 512 });
 ```

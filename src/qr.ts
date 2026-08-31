@@ -6,7 +6,10 @@
  * the usual on-screen QR.
  */
 
-import { qrcode } from "etiket";
+// etiket's QR subpath, not its barrel: the barrel re-exports every symbology
+// it supports (Aztec, PDF417, DataMatrix, postal), and pulling those into a
+// consumer's graph to draw one QR relies on their bundler shaking perfectly.
+import { qrcode } from "etiket/qr";
 
 export interface DeviceQrOptions {
   /** Rendered edge length in px. Large by default: TVs are viewed from far away. */

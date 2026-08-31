@@ -5,19 +5,19 @@
 Every option we can build on is frozen, and BarcodeDetector is not coming
 soon enough to matter.
 
-| Library | Last **code** commit | Open issues | Weekly downloads |
-| --- | --- | --- | --- |
-| `jsQR` (engine inside qr-scanner) | Aug 2021 | 97 | 2.44M |
-| `qr-scanner` | Nov 2022 | 119 | 0.27M |
-| `html5-qrcode` | Jul 2023 | 444 | 1.49M |
-| `zxing-wasm` | active | 7 | 1.88M |
+| Library                           | Last **code** commit | Open issues | Weekly downloads |
+| --------------------------------- | -------------------- | ----------- | ---------------- |
+| `jsQR` (engine inside qr-scanner) | Aug 2021             | 97          | 2.44M            |
+| `qr-scanner`                      | Nov 2022             | 119         | 0.27M            |
+| `html5-qrcode`                    | Jul 2023             | 444         | 1.49M            |
+| `zxing-wasm`                      | active               | 7           | 1.88M            |
 
 Two facts drive the decision:
 
 1. **The frozen path is the only path on iOS.** WebKit's `support` position
    (Apr 2024) was applied by no-objection — "we forgot to close off the
    position" — on a draft. Its implementation landed behind a flag in May 2023
-   and is *still* off by default. The iOS bug (281848) is 21 months old,
+   and is _still_ off by default. The iOS bug (281848) is 21 months old,
    `NEW`, and `webkit-unassigned`. Firefox's bug is **7 years** old and
    assigned to nobody, with Mozilla at `defer` plus an unanswered
    fingerprinting objection (`getSupportedFormats()` leaks a device
@@ -25,15 +25,15 @@ Two facts drive the decision:
 
 2. **This is abandonment under load, not disinterest.** Web QR scanning draws
    ~7.7M downloads/week against ~2.8M for the native options — `jsQR` alone
-   outdraws `expo-camera`. The libraries are unmaintained *despite* heavy use.
+   outdraws `expo-camera`. The libraries are unmaintained _despite_ heavy use.
 
 `zxing-wasm` is maintained but is 1.04 MiB reader-only and, being WASM,
 structurally un-shakeable.
 
-**The risk we inherit:** a QR decoder feels *finished* once it decodes, which
+**The risk we inherit:** a QR decoder feels _finished_ once it decodes, which
 is precisely why these projects stall. The differentiator cannot be "modern
-patterns" — jsQR's 2021 code still decodes fine. It has to be *maintained and
-correct on iOS*. That is a commitment, not an architecture.
+patterns" — jsQR's 2021 code still decodes fine. It has to be _maintained and
+correct on iOS_. That is a commitment, not an architecture.
 
 ## Shape
 
@@ -64,7 +64,7 @@ nothing for many turns while every diagnostic read healthy.
 
 ## Build order
 
-Deliberately inverted from instinct: the *provable* half first, so the risky
+Deliberately inverted from instinct: the _provable_ half first, so the risky
 half starts on a known-good foundation.
 
 ### Stage 1 — matrix to bytes (pure logic)
@@ -95,7 +95,7 @@ low light, damaged, and inverted — inverted is not optional, since our own
 `/tv` screen renders light-on-dark by design.
 
 Gate: measure jsQR against the same corpus as the baseline. Shipping
-something that decodes *fewer* real photos than the library it replaces would
+something that decodes _fewer_ real photos than the library it replaces would
 be a straight downgrade, however clean the source.
 
 ### Stage 3 — camera adapter

@@ -25,6 +25,7 @@ export default defineConfig({
   pack: {
     entry: [
       manifest.exports["."].import.development,
+      manifest.exports["./qr"].import.development,
       manifest.exports["./client"].import.development,
       manifest.exports["./approve"].import.development,
       manifest.exports["./handlers"].import.development,

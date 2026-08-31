@@ -57,8 +57,11 @@ export {
 } from "./codes.js";
 export type { UserCodeOptions } from "./codes.js";
 
-export { renderDeviceQr } from "./qr.js";
-export type { DeviceQrOptions } from "./qr.js";
+// `renderDeviceQr` is deliberately NOT re-exported here. It is the one thing
+// in this package that needs a dependency (`etiket`), and re-exporting it
+// from the barrel would pull that into every consumer's graph — including a
+// server that only issues grants and never draws anything. Import it from
+// `@saeris/hanko/qr` instead.
 
 export { DEVICE_CODE_GRANT_TYPE } from "./types.js";
 export type {
