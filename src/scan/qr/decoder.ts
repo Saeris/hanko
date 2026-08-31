@@ -14,7 +14,7 @@
 
 import { binarize, blur } from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
-import { refineBottomRight } from "./alignment.js";
+import { locateAlignmentGrid, refineBottomRight } from "./alignment.js";
 import { decodeMatrix } from "./decode-matrix.js";
 import {
   findFinderPatterns,
@@ -25,6 +25,7 @@ import {
   applyTransform,
   estimateBottomRight,
   estimateSize,
+  samplePiecewise,
   sampleGrid,
   transformForSymbol
 } from "./sample.js";
@@ -85,13 +86,14 @@ const decodeBinarized = (
   const estimated = estimateBottomRight(finders);
   const rough = transformForSymbol(finders, size, estimated);
 
+  const version = (size - 17) / 4;
+
   // Second pass: pin the fourth corner with the alignment pattern, when one
   // is findable. Three finders fix three corners; the fourth is the one the
   // perspective error accumulates towards, and on a 117-module symbol a one
   // percent error there is more than a module of drift — every module in that
   // region samples its neighbour. It is why `high_version` images locate
   // perfectly and decode not at all.
-  const version = (size - 17) / 4;
   const bottomRight = refineBottomRight(
     matrix,
     rough,
@@ -109,7 +111,44 @@ const decodeBinarized = (
   const sampled = sampleGrid(matrix, transform, size);
   if (sampled === null) return null;
 
-  const decoded = decodeMatrix(sampled);
+  let decoded = decodeMatrix(sampled);
+
+  // Flat sampling failed. On a large symbol that usually means the surface is
+  // not flat: a page bows, and one homography models a plane. Measured on a
+  // version 40 symbol with verifiably exact corners, interior alignment
+  // patterns sat up to 1.09 modules from where the plane predicted — past
+  // half a module, every sample lands on the wrong module.
+  //
+  // Alignment patterns are a grid of known points across the whole symbol, so
+  // locating them measures the warp directly and each cell gets a transform
+  // fitted to its own corners.
+  if (decoded === null && version >= 7) {
+    const moduleSize =
+      (finders.topLeft.moduleSize +
+        finders.topRight.moduleSize +
+        finders.bottomLeft.moduleSize) /
+      3;
+
+    const grid = locateAlignmentGrid(
+      matrix,
+      transform,
+      size,
+      version,
+      moduleSize
+    );
+
+    if (grid !== null) {
+      const warped = samplePiecewise(
+        matrix,
+        size,
+        grid.anchors,
+        grid.positions,
+        transform
+      );
+      if (warped !== null) decoded = decodeMatrix(warped);
+    }
+  }
+
   if (decoded === null) return null;
 
   // Corners in image space, for callers that draw an overlay.

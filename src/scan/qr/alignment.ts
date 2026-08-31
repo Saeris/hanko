@@ -172,6 +172,64 @@ export const findAlignmentPattern = (
 };
 
 /**
+ * Locate every alignment pattern, giving a measured grid of reference points.
+ *
+ * Returns a row-major grid the same shape as the version's alignment
+ * coordinates, with `null` wherever a pattern could not be found — damaged,
+ * glared out, or (at three corners) overlapping a finder and therefore absent
+ * by design.
+ *
+ * This is what makes piecewise sampling possible: rather than one fourth
+ * corner, it measures where the symbol actually is at points spread across its
+ * whole area, which is the only way to see a warp that a single plane cannot
+ * model.
+ */
+export const locateAlignmentGrid = (
+  matrix: BitMatrix,
+  transform: Transform,
+  size: number,
+  version: number,
+  moduleSize: number
+): {
+  anchors: Array<Array<Point | null>>;
+  positions: readonly number[];
+} | null => {
+  const centers = ALIGNMENT_CENTERS[version];
+  if (centers === undefined || centers.length < 2) return null;
+
+  const span = size - 7;
+  const anchors: Array<Array<Point | null>> = [];
+
+  for (const cy of centers) {
+    const row: Array<Point | null> = [];
+    for (const cx of centers) {
+      // The three finder corners have no alignment pattern. Their positions
+      // are known exactly from the finders themselves, so they are supplied
+      // by the caller rather than searched for here.
+      const nearFinder =
+        (cx <= 8 && cy <= 8) ||
+        (cx <= 8 && cy >= size - 9) ||
+        (cx >= size - 9 && cy <= 8);
+
+      const predicted = applyTransform(
+        transform,
+        (cx - 3.5) / span,
+        (cy - 3.5) / span
+      );
+
+      row.push(
+        nearFinder
+          ? predicted
+          : findAlignmentPattern(matrix, predicted, moduleSize)
+      );
+    }
+    anchors.push(row);
+  }
+
+  return { anchors, positions: centers };
+};
+
+/**
  * Refine the fourth corner using the alignment pattern, when one can be found.
  *
  * The alignment centre sits at module `(position, position)`, not at the

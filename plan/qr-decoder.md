@@ -165,15 +165,15 @@ predicts. What is wrong: **all 49 blocks are beyond Reed-Solomon repair.**
 
 Disproved:
 
-1. *Wrong grid size.* Every neighbouring size (±12 modules) was tried; none
+1. _Wrong grid size._ Every neighbouring size (±12 modules) was tried; none
    decode.
-2. *Fourth corner misplaced.* A 7x7 search over corner positions, scored by
+2. _Fourth corner misplaced._ A 7x7 search over corner positions, scored by
    how well the sampled timing pattern alternates, recovered nothing.
-3. *Cumulative perspective drift.* Measuring predicted against actual module
+3. _Cumulative perspective drift._ Measuring predicted against actual module
    boundaries along the timing row shows drift that OSCILLATES (-0.59, +0.44,
    -0.31, +0.52, +0.34, +0.02 modules) rather than accumulating. Perspective
    error would grow smoothly in one direction.
-4. *Sub-pixel sampling jitter.* Majority-vote sampling at radius 0, 1 and 2
+4. _Sub-pixel sampling jitter._ Majority-vote sampling at radius 0, 1 and 2
    makes no difference at all — 0/12 in every case.
 
 Structure perfect, content noise, error distributed across every block rather

@@ -197,6 +197,103 @@ export const estimateSize = (finders: FinderTriple): number | null => {
 };
 
 /**
+ * Sample using local transforms fitted per region — piecewise sampling.
+ *
+ * A single homography models a FLAT quadrilateral. A photographed QR is
+ * usually on paper, and paper is never flat: it bows, curls, or lies over
+ * something. Measured on a version 40 symbol whose four corners were verified
+ * exact, the interior alignment patterns sit up to **1.09 modules** away from
+ * where the homography predicts them, growing toward the middle and
+ * vanishing at the edges. Anything past half a module samples the wrong
+ * module, which is why such a symbol can have three perfect finder patterns,
+ * a timing pattern scoring 1.00, and still decode to nothing.
+ *
+ * Alignment patterns are the fix, and not merely as a fourth corner: they are
+ * a grid of known reference points spread across the whole symbol. Locating
+ * them measures the warp directly, and each cell of that grid gets its own
+ * transform fitted to its own four corners — so the model is piecewise
+ * planar rather than globally planar, which a bowed page actually is.
+ */
+export const samplePiecewise = (
+  image: BitMatrix,
+  size: number,
+  /** Measured image positions of alignment centres, indexed [row][column]. */
+  anchors: ReadonlyArray<ReadonlyArray<Point | null>>,
+  /** Module coordinates those anchors correspond to. */
+  positions: readonly number[],
+  fallback: Transform
+): BitMatrix | null => {
+  const bits = new Uint8Array(size * size);
+
+  /** The transform governing the cell containing this module coordinate. */
+  const localTransform = (mx: number, my: number): Transform => {
+    // Find the anchor cell this module falls inside.
+    let col = -1;
+    let row = -1;
+    for (let i = 0; i < positions.length - 1; i++) {
+      if (mx >= positions[i] && mx <= positions[i + 1]) col = i;
+      if (my >= positions[i] && my <= positions[i + 1]) row = i;
+    }
+    if (col < 0 || row < 0) return fallback;
+
+    const topLeft = anchors[row]?.[col];
+    const topRight = anchors[row]?.[col + 1];
+    const bottomLeft = anchors[row + 1]?.[col];
+    const bottomRight = anchors[row + 1]?.[col + 1];
+
+    // A cell with a missing corner — damaged or glared-out alignment pattern
+    // — falls back to the global transform rather than guessing.
+    if (!topLeft || !topRight || !bottomLeft || !bottomRight) return fallback;
+
+    return squareToQuadrilateral(topLeft, topRight, bottomRight, bottomLeft);
+  };
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const transform = localTransform(x, y);
+      let source: Point;
+
+      if (transform === fallback) {
+        const span = size - 7;
+        source = applyTransform(
+          transform,
+          (x + 0.5 - 3.5) / span,
+          (y + 0.5 - 3.5) / span
+        );
+      } else {
+        // Within a cell, coordinates are relative to that cell's own corners.
+        let col = 0;
+        let row = 0;
+        for (let i = 0; i < positions.length - 1; i++) {
+          if (x >= positions[i] && x <= positions[i + 1]) col = i;
+          if (y >= positions[i] && y <= positions[i + 1]) row = i;
+        }
+        const x0 = positions[col];
+        const x1 = positions[col + 1];
+        const y0 = positions[row];
+        const y1 = positions[row + 1];
+
+        source = applyTransform(
+          transform,
+          (x + 0.5 - x0) / (x1 - x0),
+          (y + 0.5 - y0) / (y1 - y0)
+        );
+      }
+
+      const sx = Math.round(source.x);
+      const sy = Math.round(source.y);
+      if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) {
+        return null;
+      }
+
+      bits[y * size + x] = image.bits[sy * image.width + sx]!;
+    }
+  }
+
+  return { bits, width: size, height: size };
+};
+
+/**
  * Sample the symbol into a clean module grid.
  *
  * Each module is read at its centre, mapped through the transform. Reading
