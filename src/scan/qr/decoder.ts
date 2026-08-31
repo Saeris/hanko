@@ -39,6 +39,7 @@ import {
   estimateSize,
   refineTransform,
   samplePiecewise,
+  searchCorner,
   sampleGrid,
   transformForSymbol
 } from "./sample.js";
@@ -98,7 +99,8 @@ const decodeBinarized = (
   image: GrayImage,
   invert: boolean,
   global = false,
-  denoise = false
+  denoise = false,
+  deepSearch = false
 ): DecodedSymbol | null => {
   const binarized = global
     ? binarizeGlobal(image, { invert })
@@ -228,6 +230,38 @@ const decodeBinarized = (
     }
   }
 
+  // Still nothing. Search the fourth corner by fitness rather than deriving
+  // it. Every geometric derivation has fallen short here, while supplying a
+  // known-good corner takes `perspective` from 2 of 23 images to 7 — so the
+  // information is recoverable but not computable, which makes it a search.
+  //
+  // Gated on `deepSearch`, because it is by far the most expensive stage in
+  // the decoder: 625 candidate transforms scored against refinement's 80. Run
+  // unconditionally it starves the cheaper retry rungs above it of their time
+  // budget, which measured as `close` collapsing from 9 of 14 to 0 — the
+  // search itself is valuable, but not at the price of everything after it.
+  if (decoded === null && deepSearch) {
+    for (const candidate of searchCorner(
+      matrix,
+      finders,
+      size,
+      moduleSize,
+      alignmentCentersFor(version),
+      estimated
+    )) {
+      const candidateGrid = sampleGrid(matrix, candidate, size);
+      if (candidateGrid === null) continue;
+
+      const candidateDecode = decodeMatrix(candidateGrid);
+      if (candidateDecode !== null) {
+        transform = candidate;
+        sampled = candidateGrid;
+        decoded = candidateDecode;
+        break;
+      }
+    }
+  }
+
   // Flat sampling failed. On a large symbol that usually means the surface is
   // not flat: a page bows, and one homography models a plane. Measured on a
   // version 40 symbol with verifiably exact corners, interior alignment
@@ -287,7 +321,10 @@ export const createQrDecoder = ({
   retryBlurred = true,
   timeBudgetMs = 120
 }: QrDecoderOptions = {}): SymbolDecoder => {
-  const attempt = (image: GrayImage): DecodedSymbol | null => {
+  const attempt = (
+    image: GrayImage,
+    deepSearch = false
+  ): DecodedSymbol | null => {
     // Local binarization first, then global. Neither dominates: local follows
     // a shadow across a page and is what makes unevenly-lit photographs
     // readable at all, while global is more faithful on a clean image because
@@ -307,12 +344,24 @@ export const createQrDecoder = ({
     for (const denoise of [false, true]) {
       for (const global of [false, true]) {
         if (polarity !== `light-on-dark`) {
-          const normal = decodeBinarized(image, false, global, denoise);
+          const normal = decodeBinarized(
+            image,
+            false,
+            global,
+            denoise,
+            deepSearch
+          );
           if (normal !== null) return normal;
         }
 
         if (polarity !== `dark-on-light`) {
-          const inverted = decodeBinarized(image, true, global, denoise);
+          const inverted = decodeBinarized(
+            image,
+            true,
+            global,
+            denoise,
+            deepSearch
+          );
           if (inverted !== null) return inverted;
         }
       }
@@ -401,6 +450,26 @@ export const createQrDecoder = ({
         return null;
       }
 
+      // Rungs run cheapest first, so a time budget buys as many attempts as
+      // it can before running out. Measured on a 1024x768 frame: downscale
+      // 6ms, local binarize 16ms, global binarize 24ms, blur 28ms, denoise
+      // 31ms. This was previously ordered by when each rung was written,
+      // which put downscaling — the cheapest, and the one that took `close`
+      // from 28.6% to 31.0% and `damaged` from 22.9% to 27.1% — last.
+      //
+      // Downscaling only helps an image large enough to spare the resolution.
+      // The guard wraps the LOOP rather than returning, because every rung
+      // after it is unrelated to image size; guarding with a return silently
+      // skipped the deep search on small frames and cost `nominal` 10 of 14
+      // images down to 4.
+      if (Math.min(image.width, image.height) >= 600) {
+        for (const factor of [2, 3]) {
+          if (spent()) return null;
+          const smaller = attempt(downscale(image, factor));
+          if (smaller !== null) return smaller;
+        }
+      }
+
       if (spent()) return null;
       const offset = attempt(shifted(image));
       if (offset !== null) return offset;
@@ -409,25 +478,11 @@ export const createQrDecoder = ({
       const blurred = attempt(blur(image, radius));
       if (blurred !== null || !retryBlurred) return blurred;
 
-      // Last rung: try the image smaller. A symbol shot from a distance on a
-      // high-megapixel sensor has modules two or three pixels wide, and at
-      // that scale both detectors return module-size estimates spanning an
-      // order of magnitude within one image — noise, not measurement.
-      // Averaging pixels down trades resolution the symbol never had for a
-      // signal it does.
-      //
-      // Only worth attempting on an image large enough to spare the
-      // resolution; below that, downscaling destroys a symbol that a gentler
-      // pass could still read.
-      if (Math.min(image.width, image.height) < 600) return null;
-
-      for (const factor of [2, 3]) {
-        if (spent()) return null;
-        const smaller = attempt(downscale(image, factor));
-        if (smaller !== null) return smaller;
-      }
-
-      return null;
+      // Last of all: the corner search, the single most expensive stage in
+      // the decoder. Run earlier it starves everything after it — measured as
+      // `close` collapsing from 9 of 14 to 0 under a budget.
+      if (spent()) return null;
+      return attempt(image, true);
     }
   };
 };

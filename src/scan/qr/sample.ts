@@ -363,6 +363,58 @@ export const refineTransform = (
 };
 
 /**
+ * Search for the fourth corner by fitness rather than computing it.
+ *
+ * Every attempt to derive this corner from geometry has fallen short: the
+ * parallelogram assumption ignores perspective, edge-following measured no
+ * better, and the alignment pattern is often missing on the symbols that need
+ * it most. Meanwhile supplying a known-good corner takes the `perspective`
+ * category from 2 of 23 images to 7, so the information IS recoverable — it
+ * just is not derivable.
+ *
+ * So it is searched for. {@link scoreTransform} can rank a candidate without
+ * knowing the answer, which turns this into an optimisation rather than a
+ * derivation.
+ *
+ * The step size matters more than the range. The corner error has a median of
+ * 1.6 modules on that category, so a coarse grid straddles the answer and
+ * never lands on it: a two-module step recovered nothing, and a half-module
+ * step recovered all five. That is why this searches finely over a modest
+ * range rather than coarsely over a wide one.
+ */
+export const searchCorner = (
+  image: BitMatrix,
+  finders: FinderTriple,
+  size: number,
+  moduleSize: number,
+  alignmentCenters: readonly number[],
+  estimate: Point
+): Transform[] => {
+  const scored: Array<{ score: number; transform: Transform }> = [];
+
+  for (let dy = -6; dy <= 6; dy += 0.5) {
+    for (let dx = -6; dx <= 6; dx += 0.5) {
+      const corner = {
+        x: estimate.x + dx * moduleSize,
+        y: estimate.y + dy * moduleSize
+      };
+      const transform = transformForSymbol(finders, size, corner);
+      scored.push({
+        score: scoreTransform(image, transform, size, alignmentCenters),
+        transform
+      });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+
+  // The best few, not the single best. The score is a good ranking and not a
+  // perfect one — it prefers the corner that decodes on six images in eight,
+  // which is worth several decode attempts but not blind trust.
+  return scored.slice(0, 8).map((entry) => entry.transform);
+};
+
+/**
  * Sample using local transforms fitted per region — piecewise sampling.
  *
  * A single homography models a FLAT quadrilateral. A photographed QR is
