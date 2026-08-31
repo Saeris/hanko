@@ -62,6 +62,65 @@ export const toGray = (
   return { data, width, height };
 };
 
+/**
+ * Blur an image with a separable box filter, approximating a Gaussian.
+ *
+ * Two passes of a box filter — one horizontal, one vertical — is a standard
+ * cheap stand-in for a true Gaussian, and it is separable, so cost is linear
+ * in radius rather than quadratic.
+ *
+ * This exists for one specific failure: photographing a screen. Moire banding
+ * is frequency ALIASING between the camera sensor grid and the display's
+ * sub-pixel grid, so the interference sits at a much higher spatial frequency
+ * than the modules do. Low-pass filtering suppresses the banding and leaves
+ * the modules — measured on the benchmark corpus, it takes the `monitor`
+ * category from 0 of 25 to 10 of 25.
+ *
+ * It is NOT a free win and must not be applied by default: the same filter
+ * takes `blurred` from 5 of 14 down to 1, and `nominal` from 3 to 0. A blurred
+ * photograph blurred again is unreadable. Use it as a retry after a sharp
+ * pass fails.
+ */
+export const blur = (image: GrayImage, radius: number): GrayImage => {
+  if (radius < 1) return image;
+
+  const { width, height } = image;
+  const horizontal = new Uint8ClampedArray(width * height);
+  const output = new Uint8ClampedArray(width * height);
+  const window = radius * 2 + 1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let sum = 0;
+      let count = 0;
+      for (let offset = -radius; offset <= radius; offset++) {
+        const sx = x + offset;
+        if (sx < 0 || sx >= width) continue;
+        sum += image.data[y * width + sx];
+        count++;
+      }
+      horizontal[y * width + x] = sum / (count === 0 ? 1 : count);
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let sum = 0;
+      let count = 0;
+      for (let offset = -radius; offset <= radius; offset++) {
+        const sy = y + offset;
+        if (sy < 0 || sy >= height) continue;
+        sum += horizontal[sy * width + x];
+        count++;
+      }
+      output[y * width + x] = sum / (count === 0 ? 1 : count);
+    }
+  }
+
+  void window;
+  return { data: output, width, height };
+};
+
 /** Per-block average brightness, and the global average as a fallback. */
 const blockAverages = (
   image: GrayImage,

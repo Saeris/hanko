@@ -12,7 +12,7 @@
  * removes an entire class of unexplainable failure.
  */
 
-import { binarize } from "../binarize.js";
+import { binarize, blur } from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
 import { refineBottomRight } from "./alignment.js";
 import { decodeMatrix } from "./decode-matrix.js";
@@ -39,6 +39,22 @@ export interface QrDecoderOptions {
    * scanner will ever see.
    */
   polarity?: `both` | `dark-on-light` | `light-on-dark`;
+
+  /**
+   * Retry with a low-pass filter when the sharp pass finds nothing.
+   *
+   * On by default, and it is what makes a code on a SCREEN readable: moire
+   * banding is frequency aliasing between the camera sensor and the display's
+   * sub-pixel grid, so it sits at a higher spatial frequency than the modules
+   * and blurs away while they survive. Measured on the benchmark corpus this
+   * takes the `monitor` category from 0 of 25 to 10 of 25 — and since this
+   * library's own device screen is scanned off a TV, that is not a niche case.
+   *
+   * A retry rather than a default pass, because the same filter destroys
+   * already-blurry photographs: `blurred` drops from 5 of 14 to 1, `nominal`
+   * from 3 to 0. Costs nothing on images that decode sharp.
+   */
+  retryBlurred?: boolean;
 }
 
 /** Try to decode one binarized image. */
@@ -119,9 +135,10 @@ const decodeBinarized = (
  * a server, or in a test with no browser at all.
  */
 export const createQrDecoder = ({
-  polarity = `both`
-}: QrDecoderOptions = {}): SymbolDecoder => ({
-  decode: (image: GrayImage): DecodedSymbol | null => {
+  polarity = `both`,
+  retryBlurred = true
+}: QrDecoderOptions = {}): SymbolDecoder => {
+  const attempt = (image: GrayImage): DecodedSymbol | null => {
     if (polarity !== `light-on-dark`) {
       const normal = decodeBinarized(image, false);
       if (normal !== null) return normal;
@@ -133,5 +150,21 @@ export const createQrDecoder = ({
     }
 
     return null;
-  }
-});
+  };
+
+  return {
+    decode: (image: GrayImage): DecodedSymbol | null => {
+      const sharp = attempt(image);
+      if (sharp !== null || !retryBlurred) return sharp;
+
+      // Radius scaled to the image rather than fixed: the aliasing frequency
+      // depends on how many sensor pixels cover one screen pixel, which
+      // depends on capture resolution.
+      const radius = Math.max(
+        2,
+        Math.round(Math.min(image.width, image.height) / 500)
+      );
+      return attempt(blur(image, radius));
+    }
+  };
+};
