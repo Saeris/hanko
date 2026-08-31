@@ -67,7 +67,15 @@ nothing for many turns while every diagnostic read healthy.
 Deliberately inverted from instinct: the _provable_ half first, so the risky
 half starts on a known-good foundation.
 
-### Stage 1 — matrix to bytes (pure logic)
+### Stage 1 — matrix to bytes (pure logic) — **DONE**
+
+Verified by round trip against etiket: 516 payloads across versions 1-33, all
+eight masks, all four EC levels, all three supported segment modes, and UTF-8.
+Kanji correctly returns `null` rather than guessing.
+
+Modules: `galois.ts`, `polynomial.ts`, `reed-solomon.ts`, `format.ts`,
+`mask.ts`, `blocks.ts`, `bitstream.ts`, `decode-matrix.ts`.
+
 
 Format/version decode, unmasking, de-interleaving, Reed-Solomon over GF(256),
 mode parsing (numeric, alphanumeric, byte; **not** Kanji/ECI — out of scope).
