@@ -337,7 +337,7 @@ const scoreTriple = (triple: readonly FinderPattern[]): number | null => {
   if (meanSize <= 0) return null;
 
   const sizeSpread = Math.max(...sizes) / Math.min(...sizes) - 1;
-  if (sizeSpread > 0.5) return null;
+  if (sizeSpread > 1.5) return null;
 
   // The three sit at the corners of a right isosceles triangle: two equal
   // legs and a hypotenuse of sqrt(2) times their length.
@@ -352,12 +352,12 @@ const scoreTriple = (triple: readonly FinderPattern[]): number | null => {
 
   // Legs far enough apart in length are not a QR at any angle.
   const legRatio = leg2 / leg1;
-  if (legRatio > 1.4) return null;
+  if (legRatio > 2.2) return null;
 
   const expectedHypotenuse = ((leg1 + leg2) / 2) * Math.SQRT2;
   const hypotenuseError =
     Math.abs(hypotenuse - expectedHypotenuse) / expectedHypotenuse;
-  if (hypotenuseError > 0.35) return null;
+  if (hypotenuseError > 0.5) return null;
 
   // Separation must be plausible for the module size — the legs span
   // (size - 7) modules, so 14 to 170 covers versions 1 to 40 with slack.
