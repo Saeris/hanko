@@ -118,6 +118,67 @@ Both polarities, by default.
 **Out:** Kanji and ECI modes, Micro QR, rMQR, and every 1D symbology. These
 are what make the incumbents large and un-shakeable.
 
+## Corpus results
+
+Measured on the 718-image BoofCV benchmark (`yarn corpus`).
+
+|                                   | rate      |
+| --------------------------------- | --------- |
+| jsQR (the incumbent, same images) | 24.8%     |
+| **this decoder**                  | **27.9%** |
+| ZXing (published)                 | 31.87%    |
+| ZBar (published)                  | 38.95%    |
+| BoofCV (published)                | 60.69%    |
+
+Per category, and what each number is telling us:
+
+| category     | rate  | note                             |
+| ------------ | ----- | -------------------------------- |
+| lots         | 87.5% |                                  |
+| shadows      | 63.2% | local binarization               |
+| brightness   | 50.0% | was 0% before local binarization |
+| pathological | 42.3% |                                  |
+| rotations    | 36.4% | was 2.3% before triple scoring   |
+| bright_spots | 36.4% |                                  |
+| nominal      | 34.4% |                                  |
+| noncompliant | 32.8% |                                  |
+| close        | 28.6% | was 4.8% before the blur retry   |
+| curved       | 28.4% |                                  |
+| blurred      | 26.4% |                                  |
+| monitor      | 20.0% | was 0% before the blur retry     |
+| damaged      | 14.6% |                                  |
+| perspective  | 9.3%  |                                  |
+| glare        | 3.6%  |                                  |
+| high_version | 0.0%  | see below                        |
+
+### What is known about the remaining failures
+
+**`high_version` (0%)** — diagnosed, not guessed. On `image003` the sampled
+grid reproduces the top-left finder **49/49 modules correctly**, and format
+and version both read cleanly (v40, ecLevel M, mask 3) — so location, size
+and the fourth corner are all right. The timing pattern then alternates
+perfectly for 24 modules and breaks: `#.#.#.#.#.#.#.#.#.#.#.#.###.##`.
+
+That is cumulative perspective error across 177 modules, and one fourth-corner
+anchor cannot correct it. Two hypotheses were tested and disproved first:
+neighbouring grid sizes (none decode) and single-alignment refinement (already
+implemented; ZXing uses only one anchor too). The fix is piecewise sampling —
+several alignment patterns fitting local transforms per region — which is a
+larger change than anything here so far.
+
+**`glare` (3.6%)** and **`perspective` (9.3%)** are untouched so far.
+
+### Negative results, recorded so they are not re-attempted
+
+- **Majority-vote sampling** over each module's central region (the
+  robust-geometric-transform idea from the barcode literature) made things
+  **worse**: 22.8% down to 21.7%. At this corpus's module sizes, a
+  neighbourhood wide enough to outvote sub-pixel drift is also wide enough to
+  reach the adjacent module.
+- **Blur as a default preprocessing pass** is a trade, not a win: it takes
+  `blurred` from 5/14 to 1/14 and `nominal` from 3/14 to 0/14. It is correct
+  only as a retry after a sharp pass fails.
+
 ## Open questions
 
 1. ~~Where does the photo corpus come from?~~ **Resolved.** The BoofCV QR
