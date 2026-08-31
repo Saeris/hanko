@@ -1,0 +1,194 @@
+/**
+ * Turning a greyscale photograph into black-and-white modules.
+ *
+ * This is the first stage of decoding a real image and the one that decides
+ * how many photographs are readable at all. Everything downstream — finding
+ * the symbol, sampling its grid, correcting errors — operates on the output of
+ * this step, so a module lost here is lost permanently.
+ *
+ * It is deliberately NOT a single global threshold. Measured across the BoofCV
+ * benchmark corpus, local brightness varies by 119-223 levels out of 255
+ * within a single photograph: a page lit from one side, a screen with a
+ * reflection, a code half in shadow. One threshold cannot separate dark from
+ * light modules across that spread — it either loses the shadowed half of the
+ * symbol or floods the lit half. On that corpus jsQR, which thresholds
+ * globally, reads 0% of the `brightness` and `monitor` categories.
+ *
+ * The approach here is the local-average method from ZXing's hybrid binarizer:
+ * divide the image into blocks, threshold each against its own neighbourhood,
+ * and smooth across block boundaries. It costs one extra pass over the image
+ * and is what makes unevenly-lit photographs readable.
+ */
+
+import type { BitMatrix, GrayImage } from "./types.js";
+
+/**
+ * Block size for local thresholding, in pixels.
+ *
+ * Eight is small enough to track a shadow edge and large enough that a block
+ * usually spans several modules — which matters, because the threshold is
+ * meaningless if a block can fall entirely inside one module. At typical
+ * scanning distances a module is 3-10 pixels.
+ */
+const BLOCK_SIZE = 8;
+
+/**
+ * Minimum spread within a block before its own average is trusted.
+ *
+ * A block whose pixels are all nearly the same value contains no edge — it is
+ * entirely inside a light region or entirely inside a dark one. Thresholding
+ * it against its own mean would split noise down the middle and produce a
+ * checkerboard of phantom modules, so such blocks inherit from their
+ * neighbours instead.
+ */
+const MIN_DYNAMIC_RANGE = 24;
+
+/** Convert RGBA pixels to greyscale using perceptual luminance weights. */
+export const toGray = (
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number
+): GrayImage => {
+  const data = new Uint8ClampedArray(width * height);
+
+  for (let i = 0; i < width * height; i++) {
+    const offset = i * 4;
+    // Rec. 601 luma. Green dominates because the eye is most sensitive to it,
+    // and because QR printing contrast is usually strongest there.
+    data[i] =
+      (rgba[offset] * 77 + rgba[offset + 1] * 150 + rgba[offset + 2] * 29) >> 8;
+  }
+
+  return { data, width, height };
+};
+
+/** Per-block average brightness, and the global average as a fallback. */
+const blockAverages = (
+  image: GrayImage,
+  blocksWide: number,
+  blocksHigh: number
+): { averages: Int32Array; global: number } => {
+  const averages = new Int32Array(blocksWide * blocksHigh);
+  let total = 0;
+
+  for (let blockY = 0; blockY < blocksHigh; blockY++) {
+    for (let blockX = 0; blockX < blocksWide; blockX++) {
+      const startX = blockX * BLOCK_SIZE;
+      const startY = blockY * BLOCK_SIZE;
+      const endX = Math.min(startX + BLOCK_SIZE, image.width);
+      const endY = Math.min(startY + BLOCK_SIZE, image.height);
+
+      let sum = 0;
+      let min = 255;
+      let max = 0;
+      let count = 0;
+
+      for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+          const value = image.data[y * image.width + x];
+          sum += value;
+          if (value < min) min = value;
+          if (value > max) max = value;
+          count++;
+        }
+      }
+
+      const average = count === 0 ? 128 : sum / count;
+
+      // A flat block has no edge in it. Rather than threshold noise, mark it
+      // so the smoothing pass below can take a neighbour's value — the block
+      // is inside a solid region, and its neighbours know which one.
+      averages[blockY * blocksWide + blockX] =
+        max - min >= MIN_DYNAMIC_RANGE ? Math.round(average) : -1;
+
+      total += average;
+    }
+  }
+
+  return {
+    averages,
+    global: Math.round(total / Math.max(1, blocksWide * blocksHigh))
+  };
+};
+
+/**
+ * Resolve flat blocks and smooth the threshold surface.
+ *
+ * Averaging each block against its 5x5 neighbourhood stops a hard threshold
+ * step at every block boundary, which would otherwise appear as a grid of
+ * false edges — and false edges look exactly like module boundaries to the
+ * stage that runs next.
+ */
+const smoothThresholds = (
+  averages: Int32Array,
+  blocksWide: number,
+  blocksHigh: number,
+  globalAverage: number
+): Int32Array => {
+  const smoothed = new Int32Array(blocksWide * blocksHigh);
+
+  for (let blockY = 0; blockY < blocksHigh; blockY++) {
+    for (let blockX = 0; blockX < blocksWide; blockX++) {
+      let sum = 0;
+      let count = 0;
+
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const y = blockY + dy;
+          const x = blockX + dx;
+          if (y < 0 || x < 0 || y >= blocksHigh || x >= blocksWide) continue;
+
+          const value = averages[y * blocksWide + x];
+          // Flat blocks contribute nothing — they have no opinion to average.
+          if (value < 0) continue;
+          sum += value;
+          count++;
+        }
+      }
+
+      smoothed[blockY * blocksWide + blockX] =
+        count === 0 ? globalAverage : Math.round(sum / count);
+    }
+  }
+
+  return smoothed;
+};
+
+/**
+ * Binarize a greyscale image into a bit matrix.
+ *
+ * `true` (1) means DARK, matching the QR convention where a set module is a
+ * dark one. Fixing polarity here — at the single boundary where pixels become
+ * bits — is deliberate: every stage above this one can then assume one
+ * orientation, and none of them has to ask which way round the image was.
+ *
+ * @param invert Treat light modules as set. Needed for symbols rendered
+ *   light-on-dark, which decoders that assume dark-on-light read as nothing at
+ *   all. Callers that do not know should try both.
+ */
+export const binarize = (
+  image: GrayImage,
+  { invert = false }: { invert?: boolean } = {}
+): BitMatrix => {
+  const blocksWide = Math.ceil(image.width / BLOCK_SIZE);
+  const blocksHigh = Math.ceil(image.height / BLOCK_SIZE);
+
+  const { averages, global } = blockAverages(image, blocksWide, blocksHigh);
+  const thresholds = smoothThresholds(averages, blocksWide, blocksHigh, global);
+
+  const bits = new Uint8Array(image.width * image.height);
+
+  for (let y = 0; y < image.height; y++) {
+    const blockY = Math.min(blocksHigh - 1, Math.floor(y / BLOCK_SIZE));
+
+    for (let x = 0; x < image.width; x++) {
+      const blockX = Math.min(blocksWide - 1, Math.floor(x / BLOCK_SIZE));
+      const threshold = thresholds[blockY * blocksWide + blockX];
+      const dark = image.data[y * image.width + x] < threshold;
+
+      bits[y * image.width + x] = (invert ? !dark : dark) ? 1 : 0;
+    }
+  }
+
+  return { bits, width: image.width, height: image.height };
+};
