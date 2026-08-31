@@ -479,6 +479,32 @@ export const samplePiecewise = (
     return squareToQuadrilateral(topLeft, topRight, bottomRight, bottomLeft);
   };
 
+  /**
+   * The four measured corners of the cell containing a module, if all exist.
+   *
+   * Used for bilinear interpolation, which is the correct primitive for a
+   * NON-PLANAR quadrilateral. A homography maps a square to a planar quad —
+   * and the whole reason for sampling piecewise is that the surface is
+   * curved, so each cell is slightly non-planar by construction. Texture
+   * mapping draws exactly this distinction: bilinear patches handle
+   * non-planar quads, perspective mapping handles planar ones.
+   */
+  const cellCorners = (
+    mx: number,
+    my: number
+  ): { p0: Point; p1: Point; p2: Point; p3: Point } | null => {
+    const col = cellFor(mx);
+    const row = cellFor(my);
+
+    const p0 = anchors[row]?.[col];
+    const p1 = anchors[row]?.[col + 1];
+    const p2 = anchors[row + 1]?.[col + 1];
+    const p3 = anchors[row + 1]?.[col];
+    if (!p0 || !p1 || !p2 || !p3) return null;
+
+    return { p0, p1, p2, p3 };
+  };
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const transform = localTransform(x, y);
@@ -503,11 +529,29 @@ export const samplePiecewise = (
         const y0 = positions[row];
         const y1 = positions[row + 1];
 
-        source = applyTransform(
-          transform,
-          (x + 0.5 - x0) / (x1 - x0),
-          (y + 0.5 - y0) / (y1 - y0)
-        );
+        const u = (x + 0.5 - x0) / (x1 - x0);
+        const v = (y + 0.5 - y0) / (y1 - y0);
+        const corners = cellCorners(x, y);
+
+        // Bilinear where all four corners were measured, homography
+        // otherwise. Inside the cell the two differ by up to 0.39 modules at
+        // the warps measured here — under the half-module threshold on its
+        // own, but the errors compound with everything else.
+        source =
+          corners === null
+            ? applyTransform(transform, u, v)
+            : {
+                x:
+                  (1 - u) * (1 - v) * corners.p0.x +
+                  u * (1 - v) * corners.p1.x +
+                  u * v * corners.p2.x +
+                  (1 - u) * v * corners.p3.x,
+                y:
+                  (1 - u) * (1 - v) * corners.p0.y +
+                  u * (1 - v) * corners.p1.y +
+                  u * v * corners.p2.y +
+                  (1 - u) * v * corners.p3.y
+              };
       }
 
       const sx = Math.round(source.x);
