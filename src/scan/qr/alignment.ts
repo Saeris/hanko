@@ -237,7 +237,99 @@ export const locateAlignmentGrid = (
     anchors.push(row);
   }
 
+  interpolateMissing(anchors);
   return { anchors, positions: centers };
+};
+
+/**
+ * Fill anchors that could not be located, from the ones that could.
+ *
+ * A missing anchor otherwise drops its whole cell back to the global
+ * transform, which is the flat one piecewise sampling exists to replace — so
+ * one glared-out or damaged alignment pattern loses a region far larger than
+ * itself. jsQR's own issue #197 names this directly when proposing the same
+ * technique: break the symbol into several transforms, "interpolating over
+ * the ones that cannot be found".
+ *
+ * Interpolation is linear from the nearest located anchors in the same row,
+ * then the same column. That is a good approximation because the warp being
+ * corrected is smooth by nature — paper bends, it does not crease randomly —
+ * and any estimate on the measured surface beats reverting to a plane.
+ */
+const interpolateMissing = (anchors: Array<Point | null>[]): void => {
+  const rows = anchors.length;
+  const columns = anchors[0]?.length ?? 0;
+
+  /** Nearest located neighbours along one axis, with their distances. */
+  const neighbours = (
+    at: (index: number) => Point | null,
+    length: number,
+    index: number
+  ): {
+    before?: { point: Point; gap: number };
+    after?: { point: Point; gap: number };
+  } => {
+    const result: {
+      before?: { point: Point; gap: number };
+      after?: { point: Point; gap: number };
+    } = {};
+
+    for (let i = index - 1; i >= 0; i--) {
+      const point = at(i);
+      if (point !== null) {
+        result.before = { point, gap: index - i };
+        break;
+      }
+    }
+    for (let i = index + 1; i < length; i++) {
+      const point = at(i);
+      if (point !== null) {
+        result.after = { point, gap: i - index };
+        break;
+      }
+    }
+    return result;
+  };
+
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      if (anchors[row][column] !== null) continue;
+
+      const horizontal = neighbours(
+        (i) => anchors[row][i] ?? null,
+        columns,
+        column
+      );
+      const vertical = neighbours(
+        (i) => anchors[i]?.[column] ?? null,
+        rows,
+        row
+      );
+
+      // Prefer an axis with anchors on BOTH sides — that interpolates rather
+      // than extrapolates, and extrapolation compounds error away from the
+      // measured points.
+      const pair =
+        horizontal.before && horizontal.after
+          ? horizontal
+          : vertical.before && vertical.after
+            ? vertical
+            : null;
+
+      if (pair?.before && pair.after) {
+        const total = pair.before.gap + pair.after.gap;
+        const weight = pair.before.gap / total;
+        anchors[row][column] = {
+          x:
+            pair.before.point.x +
+            (pair.after.point.x - pair.before.point.x) * weight,
+          y:
+            pair.before.point.y +
+            (pair.after.point.y - pair.before.point.y) * weight
+        };
+      }
+    }
+  }
 };
 
 /**
