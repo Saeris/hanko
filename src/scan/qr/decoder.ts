@@ -22,6 +22,7 @@ import {
 } from "./alignment.js";
 import { decodeMatrix } from "./decode-matrix.js";
 import {
+  findFinderBlobs,
   findFinderPatterns,
   orientFinders,
   selectBestTriple
@@ -76,14 +77,28 @@ const decodeBinarized = (
     : binarize(image, { invert });
   const matrix = denoise ? close(binarized) : binarized;
 
+  // Two detectors, pooled. Run-length scanning reads the 1:1:3:1:1 signature
+  // and handles perspective well; blob detection reads the finder as a nested
+  // shape and handles small modules well, where band widths of two or three
+  // pixels destroy the ratio. Neither dominates, and candidates that are not
+  // finders are rejected by scoring further down.
   const patterns = findFinderPatterns(matrix);
-  if (patterns.length < 3) return null;
+
+  // Blob detection only when the run-length scan is short of a full triple AND
+  // has found at least one — meaning there is probably a symbol here that it
+  // is reading badly, rather than no symbol at all. Flooding every dark region
+  // costs 372ms on a 12-megapixel frame, so it must not run speculatively.
+  const pooled =
+    patterns.length >= 3 || patterns.length === 0
+      ? patterns
+      : [...patterns, ...findFinderBlobs(matrix)];
+  if (pooled.length < 3) return null;
 
   // Scored rather than taking the first three. Across the benchmark corpus
   // the rotations, high_version and brightness categories return MORE than
   // three candidates on nearly every image, so an arbitrary three discards
   // the right answer and loses a symbol that was successfully found.
-  const triple = selectBestTriple(patterns);
+  const triple = selectBestTriple(pooled);
   if (triple === null) return null;
 
   const finders = orientFinders(triple);
@@ -328,6 +343,13 @@ export const createQrDecoder = ({
         Math.round(Math.min(image.width, image.height) / 500)
       );
 
+      // Only the run-length scan, deliberately. Blob detection floods every
+      // dark region and costs 372ms on a 12-megapixel frame; running it here
+      // would spend that on frames containing nothing, which is the case this
+      // exit exists to make cheap. A symbol that only the blob detector can
+      // see is lost — an acceptable trade, since the run-length scan finds
+      // SOMETHING in all but 24 of the 718 corpus images, and this gate needs
+      // only one candidate anywhere to let the full ladder proceed.
       const hasCandidate = (candidate: GrayImage): boolean =>
         findFinderPatterns(binarize(candidate)).length > 0 ||
         findFinderPatterns(binarize(candidate, { invert: true })).length > 0;

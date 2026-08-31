@@ -360,6 +360,125 @@ export const findFinderPatterns = (matrix: BitMatrix): FinderPattern[] => {
 };
 
 /**
+ * Find finder patterns as nested SHAPES rather than as run-length ratios.
+ *
+ * The 1:1:3:1:1 scan needs several clean pixels per band. In a 12-megapixel
+ * photograph where the symbol occupies a small part of the frame, a module is
+ * two or three pixels wide and JPEG artefacts destroy the ratio — measured on
+ * the corpus, the `close` category is exactly this case, and the run-length
+ * scan finds three patterns in only half of them.
+ *
+ * A finder is also a shape: a dark square ring, a light ring inside it, and a
+ * dark core. That structure survives at scales where the ratio does not,
+ * because it depends on connectivity rather than on measuring band widths.
+ * BoofCV takes this approach — it detects the pattern the way AR-marker
+ * trackers do rather than the way the QR specification describes — and scores
+ * 100% on this corpus category where run-length scanning manages 28.6%.
+ *
+ * Complementary rather than better: on `perspective` images this finds three
+ * patterns in one image of eight where the run-length scan finds all eight,
+ * because a foreshortened finder stops being square. Both are run, and their
+ * candidates pooled.
+ */
+export const findFinderBlobs = (matrix: BitMatrix): FinderPattern[] => {
+  const { width, height, bits } = matrix;
+  const seen = new Uint8Array(width * height);
+  const found: FinderPattern[] = [];
+
+  const at = (x: number, y: number): number =>
+    x < 0 || y < 0 || x >= width || y >= height ? 0 : bits[y * width + x];
+
+  // A blob larger than this is not a finder pattern but a dark region of the
+  // scene, and flooding it wastes the whole budget.
+  const maxArea = Math.max(4096, Math.floor((width * height) / 16));
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const start = y * width + x;
+      if (seen[start] === 1 || bits[start] !== 1) continue;
+
+      let area = 0;
+      let minX = x;
+      let maxX = x;
+      let minY = y;
+      let maxY = y;
+      const stack = [start];
+      seen[start] = 1;
+
+      while (stack.length > 0) {
+        const index = stack.pop()!;
+        const cy = Math.floor(index / width);
+        const cx = index % width;
+        area++;
+
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+        if (area > maxArea) break;
+
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1]
+        ] as const) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+
+          const next = ny * width + nx;
+          if (seen[next] === 0 && bits[next] === 1) {
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+      }
+
+      const blobWidth = maxX - minX + 1;
+      const blobHeight = maxY - minY + 1;
+      if (area < 20 || blobWidth < 7 || blobHeight < 7 || area > maxArea) {
+        continue;
+      }
+
+      // Roughly square. Loose, because perspective makes a real finder
+      // rectangular — but not so loose that any dark streak qualifies.
+      if (
+        Math.max(blobWidth, blobHeight) / Math.min(blobWidth, blobHeight) >
+        1.5
+      ) {
+        continue;
+      }
+
+      // The outer ring is a RING: its blob should not fill its bounding box,
+      // because the light separator breaks it away from the core.
+      if (area / (blobWidth * blobHeight) > 0.75) continue;
+
+      const centerX = Math.round(minX + blobWidth / 2);
+      const centerY = Math.round(minY + blobHeight / 2);
+      const moduleSize = blobWidth / 7;
+
+      // The nesting itself: dark core, light at 1.5 modules out in every
+      // direction. This is what separates a finder from any other square.
+      if (at(centerX, centerY) !== 1) continue;
+      const gap = Math.round(moduleSize * 1.5);
+      if (
+        at(centerX + gap, centerY) !== 0 ||
+        at(centerX - gap, centerY) !== 0 ||
+        at(centerX, centerY + gap) !== 0 ||
+        at(centerX, centerY - gap) !== 0
+      ) {
+        continue;
+      }
+
+      found.push({ center: { x: centerX, y: centerY }, moduleSize });
+    }
+  }
+
+  return found;
+};
+
+/**
  * Choose the three candidates most likely to be one symbol's finders.
  *
  * Taking the first three found is wrong far more often than it looks. Measured
