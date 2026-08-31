@@ -146,11 +146,22 @@ const looksLikeAlignment = (
 export const findAlignmentPattern = (
   matrix: BitMatrix,
   estimate: Point,
-  moduleSize: number
+  moduleSize: number,
+  /** How many modules out to search. Wider when the estimate is less trusted. */
+  searchModules = 4
 ): Point | null => {
-  // Half the pattern-to-corner distance is the most the estimate should ever
-  // be wrong by; beyond that a "match" is more likely to be unrelated texture.
-  const radius = Math.max(4, Math.round(moduleSize * 4));
+  // Scaled to how wrong the prediction can be, not to the pattern's own size.
+  //
+  // The prediction comes from a transform whose fourth corner is a guess, so
+  // its error grows with the symbol: on a version 40 image measured here, the
+  // corner estimate was 65px out and the true alignment pattern sat 87px from
+  // the prediction, while a radius of moduleSize * 4 searched only 27px. The
+  // search was tightest exactly where the estimate was worst, so the pattern
+  // that would have FIXED the estimate was never found.
+  //
+  // Bounded rather than unlimited: past a few modules a "match" is more
+  // likely to be unrelated texture than the pattern being looked for.
+  const radius = Math.max(8, Math.round(moduleSize * searchModules));
 
   for (let ring = 0; ring <= radius; ring++) {
     for (let dy = -ring; dy <= ring; dy++) {
@@ -262,7 +273,18 @@ export const refineBottomRight = (
       finders.bottomLeft.moduleSize) /
     3;
 
-  const found = findAlignmentPattern(matrix, predicted, moduleSize);
+  // Scaled to the symbol, because that is what scales the error. The corner
+  // guess assumes a parallelogram, and its error grows with how far the far
+  // corner is from the three measured ones — negligible on a version 2
+  // symbol, 65px on the version 40 measured here. A fixed wide radius would
+  // instead find false matches on small symbols whose estimate was already
+  // good, which measurably costs more than it recovers.
+  const found = findAlignmentPattern(
+    matrix,
+    predicted,
+    moduleSize,
+    Math.max(4, size / 12)
+  );
   if (found === null) return fallback;
 
   // Extrapolate from the alignment centre out to the symbol corner, along the
