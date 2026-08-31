@@ -200,6 +200,54 @@ export const close = (matrix: BitMatrix): BitMatrix => {
 };
 
 /**
+ * Downscale by box-averaging whole blocks of pixels.
+ *
+ * Not for speed — for signal. A symbol photographed from a distance on a
+ * 12-megapixel sensor has modules two or three pixels wide, and at that scale
+ * neither run-length scanning nor shape detection produces reliable
+ * structure: measured on the corpus, both detectors return module-size
+ * estimates spanning 1.1 to 137.9 pixels within a single image, which is
+ * noise rather than measurement.
+ *
+ * Averaging blocks of pixels down trades resolution the symbol does not have
+ * for a cleaner signal it does. BoofCV builds an image pyramid for the same
+ * reason and scores 100% on that corpus category.
+ *
+ * Box averaging rather than nearest-neighbour sampling, because dropping
+ * pixels aliases a module grid badly — the very structure being looked for
+ * beats against the sampling lattice.
+ */
+export const downscale = (image: GrayImage, factor: number): GrayImage => {
+  if (factor <= 1) return image;
+
+  const width = Math.max(1, Math.floor(image.width / factor));
+  const height = Math.max(1, Math.floor(image.height / factor));
+  const data = new Uint8ClampedArray(width * height);
+
+  for (let y = 0; y < height; y++) {
+    const startY = Math.floor(y * factor);
+    const endY = Math.min(image.height, Math.floor((y + 1) * factor));
+
+    for (let x = 0; x < width; x++) {
+      const startX = Math.floor(x * factor);
+      const endX = Math.min(image.width, Math.floor((x + 1) * factor));
+
+      let sum = 0;
+      let count = 0;
+      for (let sy = startY; sy < endY; sy++) {
+        for (let sx = startX; sx < endX; sx++) {
+          sum += image.data[sy * image.width + sx];
+          count++;
+        }
+      }
+      data[y * width + x] = count === 0 ? 0 : sum / count;
+    }
+  }
+
+  return { data, width, height };
+};
+
+/**
  * Blur an image with a separable box filter, approximating a Gaussian.
  *
  * Two passes of a box filter — one horizontal, one vertical — is a standard

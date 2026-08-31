@@ -12,7 +12,13 @@
  * removes an entire class of unexplainable failure.
  */
 
-import { binarize, binarizeGlobal, blur, close } from "../binarize.js";
+import {
+  binarize,
+  binarizeGlobal,
+  blur,
+  close,
+  downscale
+} from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
 import {
   alignmentCentersFor,
@@ -84,21 +90,29 @@ const decodeBinarized = (
   // finders are rejected by scoring further down.
   const patterns = findFinderPatterns(matrix);
 
-  // Blob detection only when the run-length scan is short of a full triple AND
-  // has found at least one — meaning there is probably a symbol here that it
-  // is reading badly, rather than no symbol at all. Flooding every dark region
-  // costs 372ms on a 12-megapixel frame, so it must not run speculatively.
-  const pooled =
-    patterns.length >= 3 || patterns.length === 0
-      ? patterns
-      : [...patterns, ...findFinderBlobs(matrix)];
-  if (pooled.length < 3) return null;
-
   // Scored rather than taking the first three. Across the benchmark corpus
   // the rotations, high_version and brightness categories return MORE than
   // three candidates on nearly every image, so an arbitrary three discards
   // the right answer and loses a symbol that was successfully found.
-  const triple = selectBestTriple(pooled);
+  let triple = patterns.length >= 3 ? selectBestTriple(patterns) : null;
+
+  // Fall back to shape-based detection, POOLED with whatever the scan found.
+  //
+  // Scoring the two detectors separately was tried on the theory that their
+  // module-size estimates are incommensurable — one derived from run lengths,
+  // one from a bounding box — and measured slightly worse (39.3% against
+  // 39.4%). Pooling lets a triple mix a confidently-scanned finder with a
+  // blob-detected one, which is often exactly the right answer.
+  //
+  // Only attempted when the scan is short of a full triple but found at least
+  // one candidate: that means a symbol is probably present and being read
+  // badly, rather than absent. Flooding every dark region costs 372ms on a
+  // 12-megapixel frame, so it must not run speculatively.
+  if (triple === null && patterns.length > 0 && patterns.length < 3) {
+    const blobs = findFinderBlobs(matrix);
+    if (blobs.length > 0) triple = selectBestTriple([...patterns, ...blobs]);
+  }
+
   if (triple === null) return null;
 
   const finders = orientFinders(triple);
@@ -359,9 +373,29 @@ export const createQrDecoder = ({
       }
 
       const offset = attempt(shifted(image));
-      if (offset !== null || !retryBlurred) return offset;
+      if (offset !== null) return offset;
 
-      return attempt(blur(image, radius));
+      const blurred = attempt(blur(image, radius));
+      if (blurred !== null || !retryBlurred) return blurred;
+
+      // Last rung: try the image smaller. A symbol shot from a distance on a
+      // high-megapixel sensor has modules two or three pixels wide, and at
+      // that scale both detectors return module-size estimates spanning an
+      // order of magnitude within one image — noise, not measurement.
+      // Averaging pixels down trades resolution the symbol never had for a
+      // signal it does.
+      //
+      // Only worth attempting on an image large enough to spare the
+      // resolution; below that, downscaling destroys a symbol that a gentler
+      // pass could still read.
+      if (Math.min(image.width, image.height) < 600) return null;
+
+      for (const factor of [2, 3]) {
+        const smaller = attempt(downscale(image, factor));
+        if (smaller !== null) return smaller;
+      }
+
+      return null;
     }
   };
 };
