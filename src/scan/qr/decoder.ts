@@ -12,7 +12,7 @@
  * removes an entire class of unexplainable failure.
  */
 
-import { binarize, blur } from "../binarize.js";
+import { binarize, binarizeGlobal, blur } from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
 import {
   estimateCornerFromEdges,
@@ -65,9 +65,12 @@ export interface QrDecoderOptions {
 /** Try to decode one binarized image. */
 const decodeBinarized = (
   image: GrayImage,
-  invert: boolean
+  invert: boolean,
+  global = false
 ): DecodedSymbol | null => {
-  const matrix = binarize(image, { invert });
+  const matrix = global
+    ? binarizeGlobal(image, { invert })
+    : binarize(image, { invert });
 
   const patterns = findFinderPatterns(matrix);
   if (patterns.length < 3) return null;
@@ -201,14 +204,22 @@ export const createQrDecoder = ({
   retryBlurred = true
 }: QrDecoderOptions = {}): SymbolDecoder => {
   const attempt = (image: GrayImage): DecodedSymbol | null => {
-    if (polarity !== `light-on-dark`) {
-      const normal = decodeBinarized(image, false);
-      if (normal !== null) return normal;
-    }
+    // Local binarization first, then global. Neither dominates: local follows
+    // a shadow across a page and is what makes unevenly-lit photographs
+    // readable at all, while global is more faithful on a clean image because
+    // local thresholding invents structure in flat regions. zxing-cpp reached
+    // the same conclusion — its issue #809 is an image its local binarizer
+    // cannot read and its global one can.
+    for (const global of [false, true]) {
+      if (polarity !== `light-on-dark`) {
+        const normal = decodeBinarized(image, false, global);
+        if (normal !== null) return normal;
+      }
 
-    if (polarity !== `dark-on-light`) {
-      const inverted = decodeBinarized(image, true);
-      if (inverted !== null) return inverted;
+      if (polarity !== `dark-on-light`) {
+        const inverted = decodeBinarized(image, true, global);
+        if (inverted !== null) return inverted;
+      }
     }
 
     return null;

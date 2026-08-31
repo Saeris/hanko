@@ -63,6 +63,80 @@ export const toGray = (
 };
 
 /**
+ * Binarize against one threshold chosen from the whole image's histogram.
+ *
+ * The opposite trade to {@link binarize}. A single threshold cannot follow a
+ * shadow across a page — which is why local thresholding exists and why it
+ * takes the `brightness` and `monitor` categories from nothing to something.
+ * But local thresholding invents structure in flat regions, and on a clean,
+ * evenly-lit image a global threshold is both more faithful and less prone to
+ * that.
+ *
+ * Neither dominates, so this is a retry rather than a replacement. zxing-cpp
+ * reached the same conclusion from the other direction: its issue #809 is an
+ * image its local binarizer cannot read and its global one can, and its
+ * issue #500 is a prototype for supporting several binarizers for exactly
+ * this reason.
+ *
+ * The threshold is the midpoint between the two dominant peaks of the
+ * histogram rather than the mean. A QR is mostly two tones, so the histogram
+ * is bimodal, and the mean of a symbol with more light area than dark sits
+ * inside the light peak and thresholds half the modules away.
+ */
+export const binarizeGlobal = (
+  image: GrayImage,
+  { invert = false }: { invert?: boolean } = {}
+): BitMatrix => {
+  const histogram = new Uint32Array(32);
+  for (const value of image.data) histogram[value >> 3]++;
+
+  // Tallest bucket, then the bucket furthest from it weighted by its own
+  // height — the standard two-peak search, which avoids picking the tall
+  // peak's immediate neighbour as the second "peak".
+  let first = 0;
+  for (let i = 1; i < 32; i++) {
+    if (histogram[i] > histogram[first]) first = i;
+  }
+
+  let second = first;
+  let bestScore = 0;
+  for (let i = 0; i < 32; i++) {
+    const distance = i - first;
+    const score = histogram[i] * distance * distance;
+    if (score > bestScore) {
+      bestScore = score;
+      second = i;
+    }
+  }
+
+  const [low, high] = first < second ? [first, second] : [second, first];
+
+  // Valley between the peaks: the bucket where the fewest pixels sit, scaled
+  // by how far it is from the peaks so a flat run does not drag it to an end.
+  let valley = low;
+  let bestValley = -1;
+  for (let i = low + 1; i < high; i++) {
+    const fromLow = i - low;
+    const fromHigh = high - i;
+    const score = fromLow * fromHigh * (high - low) - histogram[i] * 4;
+    if (score > bestValley) {
+      bestValley = score;
+      valley = i;
+    }
+  }
+
+  const threshold = (valley << 3) + 4;
+  const bits = new Uint8Array(image.width * image.height);
+
+  for (let i = 0; i < bits.length; i++) {
+    const dark = image.data[i] < threshold;
+    bits[i] = (invert ? !dark : dark) ? 1 : 0;
+  }
+
+  return { bits, width: image.width, height: image.height };
+};
+
+/**
  * Blur an image with a separable box filter, approximating a Gaussian.
  *
  * Two passes of a box filter — one horizontal, one vertical — is a standard
