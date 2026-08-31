@@ -126,42 +126,55 @@ Measured on the 718-image BoofCV benchmark (`yarn corpus`).
 | --------------------------------- | --------- |
 | jsQR (the incumbent, same images) | 24.8%     |
 | ZXing (published)                 | 31.87%    |
-| **this decoder**                  | **36.4%** |
 | ZBar (published)                  | 38.95%    |
+| **this decoder**                  | **51.5%** |
 | BoofCV (published)                | 60.69%    |
 
-Per category, with what moved each one:
+| category     | rate  |
+| ------------ | ----- |
+| brightness   | 89.3% |
+| lots         | 87.5% |
+| shadows      | 73.7% |
+| bright_spots | 66.7% |
+| noncompliant | 65.7% |
+| nominal      | 65.6% |
+| blurred      | 64.2% |
+| curved       | 61.2% |
+| monitor      | 48.0% |
+| rotations    | 47.7% |
+| pathological | 42.3% |
+| close        | 38.1% |
+| glare        | 35.7% |
+| damaged      | 27.1% |
+| perspective  | 16.3% |
+| high_version | 2.9%  |
 
-| category     | rate  | what got it there                         |
-| ------------ | ----- | ----------------------------------------- |
-| lots         | 87.5% | triple scoring                            |
-| brightness   | 78.6% | local binarization, then grid-shift retry |
-| shadows      | 63.2% | local binarization                        |
-| bright_spots | 54.5% | grid-shift retry                          |
-| nominal      | 45.6% | corner candidates, denoise                |
-| pathological | 42.3% |                                           |
-| curved       | 41.8% | corner candidates                         |
-| noncompliant | 41.8% |                                           |
-| blurred      | 39.6% | grid-shift retry                          |
-| rotations    | 38.6% | triple scoring                            |
-| close        | 28.6% | blur retry                                |
-| monitor      | 24.0% | blur retry, global binarizer              |
-| damaged      | 18.8% | denoise                                   |
-| glare        | 14.3% |                                           |
-| perspective  | 9.3%  |                                           |
-| high_version | 2.9%  |                                           |
+### Cost, and why a single frame is the wrong unit
 
-### Cost
+Recognition and latency are in direct tension here, and measuring the
+trade-off changed the architecture rather than tuning a constant.
 
-A retry ladder is what reads difficult images, and it is also what could make
-this useless in a camera loop — most frames a camera sees contain no code at
-all, so the FAILING path is the common one.
+Per-rung cost on a 1024x768 frame: downscale 6ms, local binarize 16ms, global
+binarize 24ms, blur 28ms, denoise 31ms, corner search ~250ms. Rungs run
+cheapest first so a budget buys as many attempts as possible.
 
-An unguarded ladder cost 495 ms on a blank 720p frame, capping a scanner at
-two frames a second while finding nothing. An early exit — skip the retries
-when no finder candidate exists in either polarity, on either the sharp or
-the blurred image — brings that to 233 ms with no loss of recognition. Both
-figures are guarded by tests.
+But sweeping the budget over 72 sampled images shows recognition still
+climbing well past what any single frame can afford:
+
+| budget    | decoded |
+| --------- | ------- |
+| 120ms     | 21/72   |
+| 250ms     | 24/72   |
+| 400ms     | 31/72   |
+| 700ms     | 41/72   |
+| unlimited | 44/72   |
+
+So `timeBudgetMs` is a blunt instrument: the default 120ms costs roughly half
+the achievable rate. The right shape is PROGRESSIVE — cheap rungs on every
+frame, expensive ones spread across successive frames. A camera supplies 30
+frames a second, so ten frames at 120ms is 1.2s of total work without ever
+stalling the preview, which is more than the 700ms that reaches 41 of 72.
+Not yet built; `timeBudgetMs: 0` is correct for stills today.
 
 ### What is known about the remaining failures
 
