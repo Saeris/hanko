@@ -210,6 +210,23 @@ than how many.
 
 **`glare` (3.6%)** and **`perspective` (9.3%)** are untouched so far.
 
+### What limits `perspective` (9.3%)
+
+Established by brute force rather than inference, using decode success as the
+only ground truth:
+
+- **The fourth corner is not the limit.** Searching it over a +/-8 module grid
+  recovers 4 of 15 images; the other 11 decode at NO corner position. Whatever
+  is wrong is upstream of the corner.
+- **Size estimation is not the limit.** With a known-good corner, 16 of 23
+  images fail at every legal size from 21 to 177.
+- **Finder-centre precision is part of it.** Nudging the three centres by up
+  to one module in half-module steps recovers 2 of 8 failing images — real,
+  but not the whole story.
+
+So roughly a quarter of the remaining failures are sub-module geometry and
+the rest are something else not yet identified.
+
 ### Negative results, recorded so they are not re-attempted
 
 - **Majority-vote sampling** over each module's central region (the
@@ -220,6 +237,15 @@ than how many.
 - **Blur as a default preprocessing pass** is a trade, not a win: it takes
   `blurred` from 5/14 to 1/14 and `nominal` from 3/14 to 0/14. It is correct
   only as a retry after a sharp pass fails.
+- **Fitting lines to the far edges** to locate the fourth corner — probing
+  perpendicular to each edge at several points, fitting by principal
+  direction, and intersecting — measured slightly WORSE (32.2% -> 31.9%) and
+  decoded exactly the same images as the parallelogram it replaced on
+  `perspective`, `curved` and `glare`. More principled, no better, so
+  reverted. The corner simply is not what limits those categories.
+- **A fixed wide alignment search radius** (16 modules) measured worse than
+  scaling it to the symbol: false matches on small symbols cost more than the
+  large-symbol recoveries gained.
 
 ## Open questions
 
