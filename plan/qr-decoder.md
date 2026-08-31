@@ -252,6 +252,50 @@ only ground truth:
 So roughly a quarter of the remaining failures are sub-module geometry and
 the rest are something else not yet identified.
 
+### Ideas evaluated, with what the measurements said
+
+**WebGPU acceleration — worth doing.** Profiling a 1024x768 frame: one
+`scoreTransform` costs 0.29ms, and the corner search makes 625 of them for
+~179ms, which is 78% of that stage and the single largest cost in the
+decoder. Those 625 calls are independent scorings of the same image, which is
+the shape GPU compute is for.
+
+The rest is not. Binarization, blur and downscale cost 6-31ms each, and the
+literature is explicit that WebGPU loses at that scale because buffer upload,
+dispatch and readback exceed the work. So this is one targeted kernel, not a
+rewrite.
+
+Availability is unusually good: WebGPU shipped enabled-by-default in iOS 26,
+macOS Tahoe 26 and iPadOS 26, which removed the last major holdout. MDN still
+says "not Baseline" because that needs sustained multi-engine support, but
+every target platform has it today. Note the contrast with BarcodeDetector —
+that is five years out and would REPLACE this decoder; this is available now
+and merely accelerates it.
+
+**Dewarping — already implemented, in the form that suits QR.** The
+single-image document-flattening literature works by exploiting known regular
+structure in the content: "parallelism and equal line spacing" of printed
+text. A QR has stronger structure than that — timing patterns are a known
+alternating sequence and alignment patterns sit at coordinates the spec
+fixes — and `samplePiecewise` already uses exactly that to fit local
+transforms per region. It is the QR-specific case of the same idea.
+
+Shape-from-shading specifically is a poor fit: it assumes Lambertian
+reflection and near-uniform albedo, and a QR's albedo varies violently by
+design, since the modules ARE the albedo variation.
+
+Measuring the warp did find a real bug, though: piecewise sampling was gated
+on `version >= 7`, from having first diagnosed the problem on a version 40
+symbol and assuming it scaled with symbol size. On the `curved` category
+alignment patterns sit a median of 0.70 modules off the plane — past the
+half-module threshold — regardless of version. Now gated at version 2, which
+is the first version carrying an alignment pattern at all.
+
+**LiDAR — not available to us.** Depth data is not exposed to the web
+platform: `getUserMedia` returns colour frames, and there is no depth track.
+It would require a native app, which is the opposite of this library's
+purpose.
+
 ### Negative results, recorded so they are not re-attempted
 
 - **Majority-vote sampling** over each module's central region (the

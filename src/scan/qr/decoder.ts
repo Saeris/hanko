@@ -271,7 +271,16 @@ const decodeBinarized = (
   // Alignment patterns are a grid of known points across the whole symbol, so
   // locating them measures the warp directly and each cell gets a transform
   // fitted to its own corners.
-  if (decoded === null && version >= 7) {
+  // Version 2 and up, not 7 and up. The warp this corrects is a property of
+  // the SURFACE, not of the symbol: measured on the `curved` category,
+  // alignment patterns sit a median of 0.70 modules off the plane — past the
+  // half-module threshold where sampling reads the wrong module — regardless
+  // of version. Gating at 7 came from first diagnosing this on a version 40
+  // symbol and assuming it was a large-symbol phenomenon.
+  //
+  // Every version from 2 carries at least one alignment pattern, which is
+  // the minimum this needs.
+  if (decoded === null && version >= 2) {
     const grid = locateAlignmentGrid(
       matrix,
       transform,
