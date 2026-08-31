@@ -59,6 +59,13 @@
         "default": "./dist/approve/index.mjs"
       }
     },
+    "./scan": {
+      "import": {
+        "development": "./src/scan/index.ts",
+        "types": "./dist/scan/index.d.mts",
+        "default": "./dist/scan/index.mjs"
+      }
+    },
     "./handlers": {
       "import": {
         "development": "./src/handlers.ts",
