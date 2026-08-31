@@ -280,6 +280,93 @@ export const findFinderPatterns = (matrix: BitMatrix): FinderPattern[] => {
   return found.map(({ center, moduleSize }) => ({ center, moduleSize }));
 };
 
+/**
+ * Choose the three candidates most likely to be one symbol's finders.
+ *
+ * Taking the first three found is wrong far more often than it looks. Measured
+ * across the benchmark corpus, the `rotations`, `high_version` and
+ * `brightness` categories return MORE than three candidates on essentially
+ * every image — alignment patterns, texture, and print artefacts all produce
+ * the 1:1:3:1:1 signature somewhere — so an arbitrary three discards the
+ * right answer and the symbol is lost despite having been found.
+ *
+ * Scored on the two properties three real finders always have: their module
+ * sizes agree, and they sit at the corners of a right isosceles triangle. Both
+ * hold under rotation and moderate perspective, which is what makes them
+ * usable as a selection criterion rather than a validation one.
+ */
+export const selectBestTriple = (
+  patterns: readonly FinderPattern[]
+): FinderPattern[] | null => {
+  if (patterns.length < 3) return null;
+  if (patterns.length === 3) return [...patterns];
+
+  // Beyond a handful of candidates the combinations grow cubically, so the
+  // search is capped. Candidates are already merged by proximity, so a large
+  // count means genuine clutter rather than duplicates of one pattern.
+  const pool = patterns.slice(0, 12);
+  let best: { score: number; triple: FinderPattern[] } | null = null;
+
+  for (let i = 0; i < pool.length - 2; i++) {
+    for (let j = i + 1; j < pool.length - 1; j++) {
+      for (let k = j + 1; k < pool.length; k++) {
+        const triple = [pool[i], pool[j], pool[k]];
+        const score = scoreTriple(triple);
+        if (score === null) continue;
+        if (best === null || score < best.score) best = { score, triple };
+      }
+    }
+  }
+
+  return best?.triple ?? null;
+};
+
+/**
+ * How unlike three real finders a candidate triple is. Lower is better.
+ *
+ * Returns `null` for triples that cannot be a symbol at all, which prunes most
+ * combinations before the geometry is examined.
+ */
+const scoreTriple = (triple: readonly FinderPattern[]): number | null => {
+  const [a, b, c] = triple as [FinderPattern, FinderPattern, FinderPattern];
+
+  // Three finders of one symbol are the same size. A candidate that is twice
+  // its neighbours is an alignment pattern or unrelated texture.
+  const sizes = [a.moduleSize, b.moduleSize, c.moduleSize];
+  const meanSize = (sizes[0] + sizes[1] + sizes[2]) / 3;
+  if (meanSize <= 0) return null;
+
+  const sizeSpread = Math.max(...sizes) / Math.min(...sizes) - 1;
+  if (sizeSpread > 0.5) return null;
+
+  // The three sit at the corners of a right isosceles triangle: two equal
+  // legs and a hypotenuse of sqrt(2) times their length.
+  const sides = [
+    Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y),
+    Math.hypot(b.center.x - c.center.x, b.center.y - c.center.y),
+    Math.hypot(a.center.x - c.center.x, a.center.y - c.center.y)
+  ].sort((first, second) => first - second);
+
+  const [leg1, leg2, hypotenuse] = sides as [number, number, number];
+  if (leg1 <= 0) return null;
+
+  // Legs far enough apart in length are not a QR at any angle.
+  const legRatio = leg2 / leg1;
+  if (legRatio > 1.4) return null;
+
+  const expectedHypotenuse = ((leg1 + leg2) / 2) * Math.SQRT2;
+  const hypotenuseError =
+    Math.abs(hypotenuse - expectedHypotenuse) / expectedHypotenuse;
+  if (hypotenuseError > 0.35) return null;
+
+  // Separation must be plausible for the module size — the legs span
+  // (size - 7) modules, so 14 to 170 covers versions 1 to 40 with slack.
+  const modulesApart = leg1 / meanSize;
+  if (modulesApart < 10 || modulesApart > 200) return null;
+
+  return sizeSpread + (legRatio - 1) + hypotenuseError;
+};
+
 /** Squared distance, for comparisons that never need the square root. */
 const distanceSquared = (a: Point, b: Point): number =>
   (a.x - b.x) ** 2 + (a.y - b.y) ** 2;

@@ -14,8 +14,13 @@
 
 import { binarize } from "../binarize.js";
 import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
+import { refineBottomRight } from "./alignment.js";
 import { decodeMatrix } from "./decode-matrix.js";
-import { findFinderPatterns, orientFinders } from "./locate.js";
+import {
+  findFinderPatterns,
+  orientFinders,
+  selectBestTriple
+} from "./locate.js";
 import {
   applyTransform,
   estimateBottomRight,
@@ -44,19 +49,46 @@ const decodeBinarized = (
   const matrix = binarize(image, { invert });
 
   const patterns = findFinderPatterns(matrix);
-  // Fewer than three means no symbol was found. More means either several
-  // symbols or false positives; the first three are tried rather than giving
-  // up, since a real symbol among clutter is a common case.
   if (patterns.length < 3) return null;
 
-  const finders = orientFinders(patterns.slice(0, 3));
+  // Scored rather than taking the first three. Across the benchmark corpus
+  // the rotations, high_version and brightness categories return MORE than
+  // three candidates on nearly every image, so an arbitrary three discards
+  // the right answer and loses a symbol that was successfully found.
+  const triple = selectBestTriple(patterns);
+  if (triple === null) return null;
+
+  const finders = orientFinders(triple);
   if (finders === null) return null;
 
   const size = estimateSize(finders);
   if (size === null) return null;
 
-  const bottomRight = estimateBottomRight(finders);
-  const transform = transformForSymbol(finders, size, bottomRight);
+  // First pass: assume the symbol is a parallelogram. Good enough to predict
+  // roughly where the alignment pattern should be.
+  const estimated = estimateBottomRight(finders);
+  const rough = transformForSymbol(finders, size, estimated);
+
+  // Second pass: pin the fourth corner with the alignment pattern, when one
+  // is findable. Three finders fix three corners; the fourth is the one the
+  // perspective error accumulates towards, and on a 117-module symbol a one
+  // percent error there is more than a module of drift — every module in that
+  // region samples its neighbour. It is why `high_version` images locate
+  // perfectly and decode not at all.
+  const version = (size - 17) / 4;
+  const bottomRight = refineBottomRight(
+    matrix,
+    rough,
+    finders,
+    size,
+    version,
+    estimated
+  );
+
+  const transform =
+    bottomRight === estimated
+      ? rough
+      : transformForSymbol(finders, size, bottomRight);
 
   const sampled = sampleGrid(matrix, transform, size);
   if (sampled === null) return null;
