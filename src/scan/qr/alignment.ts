@@ -256,7 +256,7 @@ export const locateAlignmentGrid = (
  * corrected is smooth by nature — paper bends, it does not crease randomly —
  * and any estimate on the measured surface beats reverting to a plane.
  */
-const interpolateMissing = (anchors: Array<Point | null>[]): void => {
+const interpolateMissing = (anchors: Array<Array<Point | null>>): void => {
   const rows = anchors.length;
   const columns = anchors[0]?.length ?? 0;
 

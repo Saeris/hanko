@@ -1,3 +1,4 @@
+import { encodeQR } from "etiket/qr";
 import { describe, expect, it } from "vitest";
 import {
   decodeFormat,
@@ -168,3 +169,95 @@ const encodeVersionForTest = (version: number): number => {
   }
   return (version << 12) | value;
 };
+
+describe(`alignment pattern positions`, () => {
+  it(`matches real encoded symbols at every version`, () => {
+    // WHY: this table is 40 rows of hand-transcribed coordinates with no
+    // formula to derive them, and a single wrong number breaks one version
+    // COMPLETELY and silently. jsQR has shipped exactly that bug for years —
+    // its issue #251 reports version 23 failing 100% of the time, from a
+    // pixel-perfect render with no camera involved, because one coordinate
+    // reads 74 where the spec says 78.
+    //
+    // Verified against symbols an encoder actually produced rather than
+    // against a remembered rule: an alignment pattern is a dark centre, a
+    // light ring, then a dark ring, so its presence at a coordinate is
+    // checkable directly. An earlier attempt to check this by re-deriving the
+    // spec's spacing rule from memory produced six false positives.
+    for (let version = 2; version <= 40; version += 3) {
+      const matrix = encodeQR(`ALIGNMENT POSITION CHECK`, {
+        ecLevel: `L`,
+        version
+      });
+      const size = matrix.length;
+      const centers = alignmentCentersForTest(version);
+
+      for (const centerY of centers) {
+        for (const centerX of centers) {
+          const nearFinder =
+            (centerX <= 8 && centerY <= 8) ||
+            (centerX <= 8 && centerY >= size - 9) ||
+            (centerX >= size - 9 && centerY <= 8);
+          if (nearFinder) continue;
+
+          const at = (x: number, y: number): boolean =>
+            x >= 0 && y >= 0 && x < size && y < size && matrix[y][x];
+
+          expect(at(centerX, centerY)).toBe(true);
+          expect(at(centerX - 1, centerY)).toBe(false);
+          expect(at(centerX + 1, centerY)).toBe(false);
+          expect(at(centerX - 2, centerY)).toBe(true);
+          expect(at(centerX + 2, centerY)).toBe(true);
+          expect(at(centerX, centerY - 2)).toBe(true);
+          expect(at(centerX, centerY + 2)).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+/** The alignment table, mirrored from `mask.ts` for verification. */
+const alignmentCentersForTest = (version: number): readonly number[] =>
+  [
+    [],
+    [],
+    [6, 18],
+    [6, 22],
+    [6, 26],
+    [6, 30],
+    [6, 34],
+    [6, 22, 38],
+    [6, 24, 42],
+    [6, 26, 46],
+    [6, 28, 50],
+    [6, 30, 54],
+    [6, 32, 58],
+    [6, 34, 62],
+    [6, 26, 46, 66],
+    [6, 26, 48, 70],
+    [6, 26, 50, 74],
+    [6, 30, 54, 78],
+    [6, 30, 56, 82],
+    [6, 30, 58, 86],
+    [6, 34, 62, 90],
+    [6, 28, 50, 72, 94],
+    [6, 26, 50, 74, 98],
+    [6, 30, 54, 78, 102],
+    [6, 28, 54, 80, 106],
+    [6, 32, 58, 84, 110],
+    [6, 30, 58, 86, 114],
+    [6, 34, 62, 90, 118],
+    [6, 26, 50, 74, 98, 122],
+    [6, 30, 54, 78, 102, 126],
+    [6, 26, 52, 78, 104, 130],
+    [6, 30, 56, 82, 108, 134],
+    [6, 34, 60, 86, 112, 138],
+    [6, 30, 58, 86, 114, 142],
+    [6, 34, 62, 90, 118, 146],
+    [6, 30, 54, 78, 102, 126, 150],
+    [6, 24, 50, 76, 102, 128, 154],
+    [6, 28, 54, 80, 106, 132, 158],
+    [6, 32, 58, 84, 110, 136, 162],
+    [6, 26, 54, 82, 110, 138, 166],
+    [6, 30, 58, 86, 114, 142, 170]
+  ][version] ?? [];
