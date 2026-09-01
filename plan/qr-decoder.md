@@ -351,6 +351,22 @@ That is the one published technique aimed squarely at this problem. The paper
 only names it; the construction is not given in enough detail to reimplement
 from the abstract.
 
+**Where the reachable headroom actually is.** Measured with the oracle corner
+supplied directly, which bounds what any corner technique can deliver: of the
+29 images `zxing-wasm` reads, **7 never reach sampling at all** (no usable
+finder triple) and 22 do, of which **18 decode with a perfect corner**. So
+the corner is worth roughly four images and finder detection is worth seven —
+and two attempts went into the smaller half before this was measured. Measure
+the ceiling before optimising towards it.
+
+The 7 that never reach sampling are all `image036`-`042`, a run with module
+sizes of 21 to 28 pixels and computed sizes of 15 to 21 modules — below
+version 1's 21, so `estimateSize` rejects them. Two of them additionally have
+a spurious candidate at module size 2.9 among three real ones at 21 to 28,
+which blows the size-agreement gate. Neither forcing small sizes nor
+clearance filtering rescues any of them, so the cause is something further up
+than either.
+
 **Tried and measured: contour-based fourth corner.** Flooding the symbol as
 one connected dark region from the top-left finder and taking the extreme
 point along the diagonal gives a corner 18 to 32 modules from the
@@ -360,6 +376,11 @@ connected region, so the furthest point of the flood is whichever fragment
 happens to extend furthest, not the corner. A real contour method needs the
 symbol's outline, which means edge detection on the greyscale image rather
 than connectivity on the binarized one.
+
+A second variant — dilating by 1.5 modules first, so adjacent modules merge
+into one blob whose extent is the symbol boundary — also decodes exactly the
+same 4 of 43. The connectivity approach does not work regardless of how the
+blob is formed.
 
 ### Negative results, recorded so they are not re-attempted
 
