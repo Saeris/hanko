@@ -51,7 +51,7 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 ## Real-photograph coverage
 
 The 718-image BoofCV benchmark, which is photographs rather than renders.
-Overall **73.1%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
+Overall **73.3%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
 ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 
 | condition                               | rate      | what is known                   |
@@ -493,6 +493,47 @@ Reductions and blurs are now memoised across the ladder, since the gate and the
 downscale rung both want half size and the blurred gate and the blur rung both
 want the same radius. Built lazily, because most frames never reach the rungs
 that need them.
+
+### Narrow before you enlarge
+
+The upscale rung measured 61,205ms per image recovered, which looked like a
+case for GPU offload. Splitting the number apart says otherwise: the enlarging
+itself is **18ms** and the other **227ms** is the rest of the pipeline running
+at quadruple pixel count. Accelerating the transform would address 7% of the
+cost.
+
+What the rung actually needs is the SYMBOL enlarged, not the frame. A symbol's
+finder bounding box covers a median **13%** of the image it sits in, so
+cropping first cuts the pipeline proportionally — and it improves accuracy as
+well as speed, because a cropped region binarizes against its own contrast
+instead of a threshold surface stretched over irrelevant background. Corpus
+73.1% -> 73.3%.
+
+Cropped per **triple**, not around all candidates. A frame holding several
+codes has candidates spread across it: measured on `lots`, their combined box
+spans a median 62% of the frame while any single symbol's spans effectively
+none. Boxing them together would defeat the saving and merge distinct symbols
+into a region belonging to neither. `rectifySymbol` was already correct here —
+it samples one symbol into its own canvas rather than warping the frame — and
+both stages now share one cheap "where is a code" pass instead of binarizing
+and scanning independently.
+
+### GPU offload, reconsidered
+
+`gpu.ts` records that binarize, blur and downscale are "far too small to
+survive the cost of uploading a buffer, dispatching a shader and reading the
+result back", measured at 16/28/6ms on a 1024x768 frame. At the 1600px the
+corpus runs, blur was **57ms** — the one image operation whose kernel dominated
+its own pipeline, and a genuine candidate.
+
+Rewriting it with running sums took it to **19.9ms** instead. Summing the whole
+window at each pixel is O(radius) per pixel per axis; adding the entering
+sample and subtracting the leaving one is O(1) at any radius. That is a larger
+saving than offloading a 57ms kernel could return once upload and readback are
+paid, and it needs no availability check.
+
+The corner search remains the one stage whose shape suits a GPU — 625
+independent scorings of the same image — and that is what `gpu.ts` targets.
 
 ### Cost per attempt is not cost per recovery
 

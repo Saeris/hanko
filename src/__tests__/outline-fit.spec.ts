@@ -319,3 +319,53 @@ describe(`threshold sweeping`, () => {
     expect([...binarizeAt(image, 50).bits]).toEqual([1, 0, 0, 0]);
   });
 });
+
+/**
+ * A frame may hold more than one code.
+ *
+ * Stages that narrow the work to "where the symbol is" have to narrow to ONE
+ * symbol. Boxing every finder candidate together produces a region belonging
+ * to no code at all — measured on the `lots` category, that box spans a median
+ * 62% of the frame where a single symbol's spans effectively none.
+ */
+describe(`narrowing to a symbol`, () => {
+  const render = (text: string, scale: number): Uint8ClampedArray[] => {
+    const matrix = encodeQR(text, { ecLevel: `M` });
+    const size = matrix.length;
+    const rows: Uint8ClampedArray[] = [];
+    for (let y = 0; y < size * scale; y++) {
+      const row = new Uint8ClampedArray(size * scale).fill(255);
+      for (let x = 0; x < size * scale; x++) {
+        if (matrix[Math.floor(y / scale)][Math.floor(x / scale)]) row[x] = 0;
+      }
+      rows.push(row);
+    }
+    return rows;
+  };
+
+  it(`reads one code with another in the frame`, () => {
+    // WHY: cropping and rectifying both fit to a single symbol's finders. If
+    // either applied its result to the whole frame, the second code would be
+    // distorted or excluded — and the `lots` category, which reads 100%, is
+    // exactly this case.
+    const first = `https://example.com/link?user_code=TFKS`;
+    const scale = 5;
+    const tile = render(first, scale);
+    const side = tile.length;
+    const quiet = 6 * scale;
+    const width = side * 2 + quiet * 3;
+    const height = side + quiet * 2;
+    const data = new Uint8ClampedArray(width * height).fill(255);
+
+    for (const left of [quiet, quiet * 2 + side]) {
+      for (let y = 0; y < side; y++) {
+        data.set(tile[y], (quiet + y) * width + left);
+      }
+    }
+
+    expect(
+      createQrDecoder({ timeBudgetMs: 0 }).decode({ data, width, height })
+        ?.value
+    ).toBe(first);
+  });
+});
