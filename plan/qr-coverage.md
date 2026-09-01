@@ -183,7 +183,27 @@ changes often.
 
    The best grids measured here read timing at 83-96%, i.e. **4-17% module
    error — between 4x and 17x over budget**. That is not a near miss that
-   better geometry closes. It also explains why five separate sources of
+   better geometry closes.
+
+   ### Who actually uses these
+
+   Worth knowing before spending more on the category. Industry guidance is
+   consistent: *"most QR codes you encounter in the wild use versions between
+   **1 and 10**"*, and the named uses for large versions are vCards, Wi-Fi
+   credentials and bulk product data — static, controlled-print, close-scan
+   situations that happen to supply the <=1% module accuracy the error budget
+   demands. High-volume logistics does **not** use them: USPS, UPS and FedEx
+   sort with their own proprietary linear symbologies, and a QR on a shipping
+   label is a supplementary consumer-facing layer, not the sorting code.
+
+   The corpus agrees. Of 450 symbols hanko reads, **82% carry 60 characters or
+   fewer** (370 of 450) and only 19 exceed ~180. Hanko's own payloads — a
+   device-authorization URL with a user code — encode to **version 3-7**, even
+   for a long tenant hostname with an issuer parameter.
+
+   So `high_version` is 33 images of a 718-image corpus, in a regime that
+   needs 4-17x better sampling than anything measured here, for a use case the
+   library will never generate and most adopters will never scan. It also explains why five separate sources of
    correct information each changed nothing: every one removes *some* error,
    but the requirement is <=1%, and a version 40 symbol allows at most 313 of
    its 31,329 modules to be wrong. A version 1 symbol allows ~4 of 441, which
@@ -228,6 +248,53 @@ changes often.
    Notably OpenCV's WeChat detector leads both categories using a CNN, which
    is not replicable in a zero-dependency library, so these may have a
    classical ceiling.
+
+## The next lever: erasure decoding
+
+Where the 268 remaining failures actually sit, by count:
+
+| category       | missing | read |
+| -------------- | ------- | ---- |
+| `high_version` | 33      | 3%   |
+| `damaged`      | 31      | 35%  |
+| `glare`        | 28      | 50%  |
+| `nominal`      | 24      | 81%  |
+| `noncompliant` | 24      | 64%  |
+| `curved`       | 23      | 66%  |
+| `perspective`  | 22      | 49%  |
+
+Excluding `high_version`, the corpus reads **65.6%**. The four buckets after
+it total 107 images — more than three times the v40 opportunity — and they sit
+in the version range that both the industry and this corpus say is where real
+scanning happens.
+
+`glare` and `damaged` share a mechanism worth pursuing. Reed-Solomon corrects
+`2t` **erasures** (failures at known positions) against only `t` **errors**
+(unknown positions) — literally double the capacity, for no improvement in
+sampling. Confirmed against this implementation: with 10 EC codewords it
+corrects exactly 5 errors and fails at 6, where erasures would reach 10.
+
+The decoder is currently errors-only, and throws the position information away
+by thresholding every pixel into a confident 0 or 1. Glare hands that
+information over for free: measured across the corpus, `glare` and
+`bright_spots` average **1.1-1.2% of pixels at or above 250**, while `nominal`
+and `damaged` measure **0.00%** — so saturation cleanly identifies the glare
+categories and would essentially never fire on ordinary images, making it safe
+for the 82% that already work. (`damaged` shows no saturation at all and would
+need a different signal, most likely absence of local contrast.)
+
+Measured tolerance for localised blob damage today, which is the shape glare
+actually takes:
+
+| EC level | survives | fails at |
+| -------- | -------- | -------- |
+| L        | 5%       | 10%      |
+| M        | 10%      | 15%      |
+| Q        | 10%      | 15%      |
+| H        | 15%      | 20%      |
+
+Doubling the correctable count should move the ecM threshold from ~10% toward
+~20% of the symbol.
 
 ## Performance envelope
 
