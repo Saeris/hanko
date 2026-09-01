@@ -327,6 +327,19 @@ browser targets — rather than in a library that does not.
 
 ### Negative results, recorded so they are not re-attempted
 
+- **Deriving module size from the symbol's span** rather than averaging the
+  finders' own run lengths. The reasoning is sound — an arm spans `size - 7`
+  modules, and a distance between two located points foreshortens far less
+  than a 7-pixel run does — and it is the same insight that fixed the size
+  estimate. Measured, it is a WASH that trends negative: 62.0% to 61.4%
+  applied everywhere, 61.7% applied only to the alignment search.
+  It gains in `nominal`, `rotations` and `high_version` and loses in `glare`,
+  `close`, `curved` and `damaged`, because the span is only as good as the
+  finder CENTRES, and on a degraded image those are imprecise — a distance
+  between two of them inherits both errors, while a run length is measured
+  locally and survives. Clean-but-angled favours the span; degraded favours
+  the run lengths, and the corpus has more of the latter.
+
 - **Majority-vote sampling** over each module's central region (the
   robust-geometric-transform idea from the barcode literature) made things
   **worse**: 22.8% down to 21.7%. At this corpus's module sizes, a
