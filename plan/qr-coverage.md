@@ -51,7 +51,7 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 ## Real-photograph coverage
 
 The 718-image BoofCV benchmark, which is photographs rather than renders.
-Overall **73.3%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
+Overall **74.4%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
 ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 
 | condition                               | rate      | what is known                   |
@@ -64,13 +64,13 @@ ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 | Even lighting (`brightness`)            | 82.1%     |                                 |
 | Non-compliant symbols                   | 77.6%     |                                 |
 | Motion blur (`blurred`)                 | 75.5%     | blur retry                      |
-| Screens and monitors (`monitor`)        | 72.0%     | low-pass retry defeats moire    |
+| Screens and monitors (`monitor`)        | 80.0%     | low-pass retry defeats moire    |
 | Pathological / adversarial              | 69.2%     | missing quiet zone              |
 | Curved surfaces (`curved`)              | 68.7%     | piecewise sampling              |
 | Perspective / oblique angles            | 67.4%     | timing-pattern sizing           |
-| Specular highlights (`bright_spots`)    | 66.7%     |                                 |
-| Glare                                   | 62.5%     |                                 |
-| Physically damaged                      | 54.2%     |                                 |
+| Specular highlights (`bright_spots`)    | 72.7%     |                                 |
+| Glare                                   | 64.3%     |                                 |
+| Physically damaged                      | 58.3%     |                                 |
 | **Very large symbols (`high_version`)** | **14.7%** | see below                       |
 
 Re-measure rather than cite: every figure here is a snapshot of a ladder that
@@ -493,6 +493,34 @@ Reductions and blurs are now memoised across the ladder, since the gate and the
 downscale rung both want half size and the blurred gate and the blur rung both
 want the same radius. Built lazily, because most frames never reach the rungs
 that need them.
+
+### Ordering from first principles
+
+Cost scheduling is only one of the properties that constrain order. Two others
+turned out to be worth coverage, and neither is about speed at all.
+
+**A lossy step should run as late as possible.** Thresholding is the most
+destructive operation in the pipeline — eight bits to one — and morphological
+closing was running *after* it. On a binarized matrix a speckle can only take
+its neighbours' bit; on the greyscale image it is filled with their
+intensities. Moving the operation to the other side of the threshold recovers
+`glare` +5 with `damaged`, `monitor` and `bright_spots` each gaining. A
+specular highlight is the clearest case: its edges are graded in grey and
+hard-clipped after thresholding.
+
+**Order determines which states are reachable, not just how fast they arrive.**
+Every rung applied exactly one transform to the original image, so a frame with
+two independent faults — small in frame AND moire — had no rung addressing
+both. Composing pairs recovers images no single transform does, and the order
+*within* a pair is not arbitrary: downscale-then-blur recovers 5 where
+blur-then-downscale recovers 3, because a box-average reduction already
+smooths and blurring first over-softens what the reduction would have handled.
+
+Together: **73.3% -> 74.4%**, with `monitor` 72.0% -> 80.0%, `bright_spots`
+66.7% -> 72.7%, `damaged` 54.2% -> 58.3% and `glare` 62.5% -> 64.3%. Unlimited
+runtime rises 105s -> 156s; the 120ms budgeted rate is unchanged at 54.6%,
+because the budget clips every one of these rungs on a live frame. Only a
+still pays for them.
 
 ### Narrow before you enlarge
 

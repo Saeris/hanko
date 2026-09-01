@@ -21,6 +21,7 @@ import {
   upscale,
   binarizeAt,
   crop,
+  closeGray,
   invertMatrix
 } from "../binarize.js";
 import type {
@@ -126,6 +127,22 @@ const UPSCALE_LIMIT = 2_000_000;
  * gate in `decodeBinarized`.
  */
 const NOISE_CANDIDATES = 60;
+
+/**
+ * Transform pairs, for frames whose faults are independent.
+ *
+ * See the rung in `decode` for why composition is needed at all and why the
+ * order within each pair is what it is.
+ */
+const COMPOSED: ReadonlyArray<(image: GrayImage, radius: number) => GrayImage> =
+  [
+    // Ordered by measured yield: 5 images, then 3 and 3. The tail pair costs
+    // about 15s per image against the first's 2s, and is kept because a time
+    // budget clips all of this on a live frame — only a still pays for it.
+    (image, radius) => blur(downscale(image, 2), radius),
+    (image, radius) => blur(upscale(image, 2), radius),
+    (image) => downscale(downscale(image, 2), 2)
+  ];
 
 /**
  * Binarization passes, cheapest-per-recovery first.
@@ -912,6 +929,38 @@ export const createQrDecoder = ({
       const softened = attempt(blurOf(image, radius));
       if (softened === null && !retryBlurred) return null;
       if (softened !== null) return softened;
+
+      // Closing on the GREY image, before any threshold.
+      //
+      // The `denoise` pass inside `attempt` does the same job on a binarized
+      // matrix, where the information it needs is already gone: a 1-bit
+      // speckle can only take its neighbours' bit, while a grey one is filled
+      // with their intensities. Thresholding is the pipeline's most
+      // destructive step, so an operation that benefits from intensity belongs
+      // before it. Measured, that ordering alone recovers `glare` +5 with
+      // `damaged`, `monitor` and `bright_spots` each gaining.
+      if (spent()) return null;
+      const filled = attempt(closeGray(image, 1));
+      if (filled !== null) return filled;
+
+      // Composed transforms, which no single rung reaches.
+      //
+      // Every rung above applies exactly one transform to the original, so an
+      // image with two independent faults — small in frame AND moire, say —
+      // has no rung that addresses both. Measured, each of these pairs
+      // recovers images no single transform does.
+      //
+      // The order within a pair matters and is not arbitrary: downscaling then
+      // blurring recovers 5 where blurring then downscaling recovers 3,
+      // because a box-average reduction already smooths, so blurring first
+      // over-softens what the reduction would have handled.
+      if (Math.min(image.width, image.height) >= 600) {
+        for (const compose of COMPOSED) {
+          if (spent()) return null;
+          const composed = attempt(compose(image, radius));
+          if (composed !== null) return composed;
+        }
+      }
 
       // The mirror of downscaling: a symbol small in frame. Local
       // binarization thresholds over a fixed 8px block, so a symbol at two or
