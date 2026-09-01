@@ -401,25 +401,24 @@ export const createQrDecoder = ({
     // gentler has failed.
     for (const denoise of [false, true]) {
       for (const global of [false, true]) {
+        // The corner search runs only on the plainest binarization, not on
+        // every combination. It costs about 48ms per candidate size and three
+        // sizes are tried, so allowing it inside all four denoise/global
+        // combinations across both polarities multiplied it eightfold — over
+        // a second per preprocessing pass, and the ladder has several.
+        //
+        // A symbol that needs denoising AND a corner search was not going to
+        // decode anyway: the search corrects geometry, and denoising is for
+        // images whose modules are damaged, which is a different fault.
+        const deep = deepSearch && !denoise && !global;
+
         if (polarity !== `light-on-dark`) {
-          const normal = decodeBinarized(
-            image,
-            false,
-            global,
-            denoise,
-            deepSearch
-          );
+          const normal = decodeBinarized(image, false, global, denoise, deep);
           if (normal !== null) return normal;
         }
 
         if (polarity !== `dark-on-light`) {
-          const inverted = decodeBinarized(
-            image,
-            true,
-            global,
-            denoise,
-            deepSearch
-          );
+          const inverted = decodeBinarized(image, true, global, denoise, deep);
           if (inverted !== null) return inverted;
         }
       }
