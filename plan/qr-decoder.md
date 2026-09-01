@@ -325,6 +325,42 @@ The one place it would genuinely fit is the WebGPU device and buffers in
 grows, and worth having in the consuming APPLICATION — which controls its own
 browser targets — rather than in a library that does not.
 
+### What the literature says about perspective, and what was tried
+
+Two papers address exactly the unsolved part — locating the fourth corner
+under strong perspective.
+
+**Corpuz et al. (2025), "QR Code Detection with Perspective Correction and
+Decoding in Real-World Conditions"** finds corners from the symbol's outer
+boundary using Canny edges and contour approximation, then applies a
+perspective transform. Their detector is YOLO-based, so the pipeline is not
+replicable here, but the corner source is the transferable idea: it comes
+from the BOUNDARY rather than from the finder patterns, and so assumes
+nothing about parallelism — which is precisely what my earlier
+edge-following attempt got wrong.
+
+They also note adding "an additional padding variable... to account for minor
+inaccuracies in corner detection". Worth remembering: `sampleGrid` currently
+returns null the moment one sample lands outside the image, which is
+unforgiving of exactly the error they pad for.
+
+**Zhang et al., "A Simple and Efficient Image Pre-processing for QR Decoder"**
+locates corners by contour search and then approximates the fourth with a
+"double tangent method... with double inverse perspective transformations".
+That is the one published technique aimed squarely at this problem. The paper
+only names it; the construction is not given in enough detail to reimplement
+from the abstract.
+
+**Tried and measured: contour-based fourth corner.** Flooding the symbol as
+one connected dark region from the top-left finder and taking the extreme
+point along the diagonal gives a corner 18 to 32 modules from the
+parallelogram estimate — very different, and decoding is unchanged at 4 of 43.
+The flaw is structural rather than tuneable: a QR's dark modules are NOT one
+connected region, so the furthest point of the flood is whichever fragment
+happens to extend furthest, not the corner. A real contour method needs the
+symbol's outline, which means edge detection on the greyscale image rather
+than connectivity on the binarized one.
+
 ### Negative results, recorded so they are not re-attempted
 
 - **Deriving module size from the symbol's span** rather than averaging the
