@@ -37,6 +37,7 @@ import {
   applyTransform,
   estimateBottomRight,
   estimateSize,
+  rectifySymbol,
   refineTransform,
   samplePiecewise,
   searchCorner,
@@ -444,6 +445,31 @@ export const createQrDecoder = ({
    * boundary onto different pixels, so a symbol that straddled one badly no
    * longer does.
    */
+  /**
+   * Locate the symbol and resample it square, or `null` if it cannot be found.
+   *
+   * The automatic form of Lightroom's Guided Upright: that tool needs a person
+   * to draw guides because nothing in a photograph says what was straight,
+   * while a QR tells us — its three finder centres sit at module coordinates
+   * the specification fixes.
+   */
+  const rectifyUpright = (image: GrayImage): GrayImage | null => {
+    const matrix = binarize(image);
+    const patterns = findFinderPatterns(matrix);
+    if (patterns.length < 3) return null;
+
+    const triple = selectBestTriple(patterns);
+    if (triple === null) return null;
+
+    const finders = orientFinders(triple);
+    if (finders === null) return null;
+
+    const size = estimateSize(finders);
+    if (size === null) return null;
+
+    return rectifySymbol(image, finders, size, 8);
+  };
+
   const shifted = (image: GrayImage): GrayImage => {
     const offset = 4;
     const width = image.width - offset;
@@ -534,6 +560,24 @@ export const createQrDecoder = ({
       if (spent()) return null;
       const blurred = attempt(blur(image, radius));
       if (blurred !== null || !retryBlurred) return blurred;
+
+      // Rectify and re-read. A projective transform already corrects
+      // perspective during sampling, so this is not about geometry — it is
+      // about what the BINARIZER sees. In an oblique photograph a module at
+      // the far edge is a fraction of the size it is near the camera, and one
+      // block size cannot suit both: measured on `perspective`, images that
+      // fail have a mean leg ratio of 1.58 and modules down to 2.4 pixels,
+      // against 1.14 and 7.5 pixels for those that decode.
+      //
+      // Rectifying makes every module the same size, so binarization and
+      // detection run on uniform data. Worth one image each on `perspective`,
+      // `glare` and `damaged`.
+      if (spent()) return null;
+      const upright = rectifyUpright(image);
+      if (upright !== null) {
+        const rectified = attempt(upright);
+        if (rectified !== null) return rectified;
+      }
 
       // Last of all: the corner search, the single most expensive stage in
       // the decoder. Run earlier it starves everything after it — measured as
