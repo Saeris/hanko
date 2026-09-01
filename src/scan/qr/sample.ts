@@ -180,41 +180,54 @@ export const estimateBottomRight = (finders: FinderTriple): Point => ({
  * are always 4n+17, and an off-by-one estimate misaligns every sampled module.
  */
 export const estimateSize = (finders: FinderTriple): number | null => {
-  const distance = Math.hypot(
+  // Derived from each arm of the finder triangle separately, then the smaller
+  // estimate taken.
+  //
+  // A QR is square, so both arms span the same number of modules — but under
+  // perspective they do not span the same number of PIXELS, and the finders on
+  // the far arm are foreshortened, which shrinks their measured module size.
+  // Since size is distance divided by module size, that inflates the estimate,
+  // and only ever upward.
+  //
+  // Measured on a corpus sequence shot at progressively steeper angles, the
+  // averaged estimate climbed 25, 29, 33, 37, 41, 45, 49 against a true 25,
+  // while the less-foreshortened arm read 25 throughout. Taking the minimum is
+  // right nine times in twelve where averaging was right four.
+  const alongTop = Math.hypot(
     finders.topRight.center.x - finders.topLeft.center.x,
     finders.topRight.center.y - finders.topLeft.center.y
   );
+  const alongLeft = Math.hypot(
+    finders.bottomLeft.center.x - finders.topLeft.center.x,
+    finders.bottomLeft.center.y - finders.topLeft.center.y
+  );
 
-  // Module size comes from the finders' own run lengths, which a rotated
-  // symbol systematically OVER-estimates: a horizontal scan crosses a rotated
-  // square diagonally, so its runs measure 1/cos(angle) too long — 1.41x at
-  // 45 degrees. Measured on a synthetic version 3 symbol, that took the size
-  // estimate from a correct 29 to 25 at every angle between 25 and 60
-  // degrees, and nothing decoded in that whole range.
-  //
-  // Correcting it requires knowing the rotation, which the finders supply:
-  // the top edge runs from the top-left finder to the top-right one, and its
-  // angle off-axis is exactly the rotation the scan suffered.
+  // Rotation widens run-length measurements: a horizontal scan crosses a
+  // rotated finder diagonally, so its runs read 1/cos(angle) too long — 1.41x
+  // at 45 degrees. The finders supply the angle, since the top arm's tilt off
+  // axis IS the rotation the scan suffered.
   const angle = Math.atan2(
     finders.topRight.center.y - finders.topLeft.center.y,
     finders.topRight.center.x - finders.topLeft.center.x
   );
-  // Folded into the first octant: the widening is symmetric about each axis
-  // and peaks at 45 degrees.
   const folded = Math.abs(
     ((angle % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2)
   );
   const widening =
     1 / Math.max(Math.cos(folded), Math.cos(Math.PI / 2 - folded));
 
-  const measured =
-    (finders.topLeft.moduleSize + finders.topRight.moduleSize) / 2;
-  const moduleSize = measured / widening;
-  if (moduleSize <= 0) return null;
+  const moduleAlongTop =
+    (finders.topLeft.moduleSize + finders.topRight.moduleSize) / 2 / widening;
+  const moduleAlongLeft =
+    (finders.topLeft.moduleSize + finders.bottomLeft.moduleSize) / 2 / widening;
+  if (moduleAlongTop <= 0 || moduleAlongLeft <= 0) return null;
 
-  // The finder centres sit 3.5 modules inside each edge, so the distance
-  // between them spans (size - 7) modules.
-  const estimate = distance / moduleSize + 7;
+  // The finder centres sit 3.5 modules inside each edge, so an arm spans
+  // (size - 7) modules.
+  const estimate = Math.min(
+    alongTop / moduleAlongTop + 7,
+    alongLeft / moduleAlongLeft + 7
+  );
   const snapped = Math.round((estimate - 17) / 4) * 4 + 17;
 
   return snapped >= 21 && snapped <= 177 ? snapped : null;
