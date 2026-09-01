@@ -380,6 +380,39 @@ tolerates about 7% of codewords. A perfect grid over a symbol whose encoder
 chose minimum redundancy is simply past what the symbol can survive. Like
 `high_version`, that is an error budget rather than a fixable stage.
 
+### The best grid reachable, per failure
+
+Sweeping every binarization, both finder detectors, both transforms and every
+candidate size, and keeping the highest timing accuracy any of them produces:
+
+| category       | failures | best grid >=90% | >=75% | median |
+| -------------- | -------- | --------------- | ----- | ------ |
+| `damaged`      | 29       | 10              | 13    | 70%    |
+| `glare`        | 21       | 8               | 9     | 70%    |
+| `bright_spots` | 12       | 3               | 3     | 57%    |
+| `pathological` | 11       | 0               | 0     | **0%** |
+
+Two distinct populations, and they need opposite things:
+
+- **21 images already reach a >=90% grid** and still fail. The geometry is
+  right; the modules are genuinely damaged past their error-correction
+  budget. Four erasure detectors have now been tried on these across three
+  rounds — saturation, ambiguity ranking, an oracle blob, and disagreement
+  between independent binarizations — converting 0, 1, 0 and 1 image
+  respectively. Erasures were the right theory for a failure mode this corpus
+  does not contain in quantity: marking positions cannot help when the damage
+  exceeds capacity however it is labelled.
+- **`pathological` produces no grid at all** — median 0% means no
+  combination of detector, binarization, transform and size lands on the
+  symbol. Its failures are detection, not registration or correction, and it
+  is the one category where a different *locator* rather than a better fit is
+  the honest next step.
+
+Also checked and worth not re-deriving: pairing the centre-based transform
+with the timing-derived size — the one combination the ladder never tries,
+since timing sizing is only attempted with the outline fit — converts
+**zero** images across every category.
+
 ## Performance envelope
 
 | case                       | cost                                              |
