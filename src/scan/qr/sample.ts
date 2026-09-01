@@ -343,11 +343,15 @@ export const scoreTransform = (
   const { bits, width, height } = image;
   const { a11, a12, a13, a21, a22, a23, a31, a32, a33 } = transform;
 
-  /** One sample at a fractional module offset, inlined. */
-  const sampleAt = (mx: number, my: number): number => {
-    const u = (mx - 3.5) / span;
-    const v = (my - 3.5) / span;
-
+  /**
+   * One sample at a fractional module offset, inlined.
+   *
+   * Takes normalised coordinates rather than module ones, so the caller can
+   * hoist the `(m - 3.5) / span` conversion: `cell` samples three distinct x
+   * offsets against three y offsets, so computing them per sample does nine
+   * divisions where six suffice.
+   */
+  const sampleAt = (u: number, v: number): number => {
     const w = a13 * u + a23 * v + a33;
     if (w === 0) return 0;
 
@@ -361,20 +365,36 @@ export const scoreTransform = (
     return bits[py * width + px] === 1 ? 1 : -1;
   };
 
-  const cell = (x: number, y: number): number =>
-    // Unrolled. The array-literal form allocated two arrays and ran two
-    // iterator protocols per call — `Symbol.iterator`, `next`, `done`,
-    // `value` — and this runs hundreds of times per scored transform, with
-    // 1875 transforms scored per image.
-    sampleAt(x + 0.3, y + 0.3) +
-    sampleAt(x + 0.5, y + 0.3) +
-    sampleAt(x + 0.7, y + 0.3) +
-    sampleAt(x + 0.3, y + 0.5) +
-    sampleAt(x + 0.5, y + 0.5) +
-    sampleAt(x + 0.7, y + 0.5) +
-    sampleAt(x + 0.3, y + 0.7) +
-    sampleAt(x + 0.5, y + 0.7) +
-    sampleAt(x + 0.7, y + 0.7);
+  const cell = (x: number, y: number): number => {
+    // Unrolled, with the coordinate conversion hoisted. The array-literal
+    // form allocated two arrays and ran two iterator protocols per call —
+    // `Symbol.iterator`, `next`, `done`, `value` — and this runs hundreds of
+    // times per scored transform, with 1875 transforms scored per image.
+    //
+    // Nine samples rather than five: five measured identical accuracy on the
+    // corpus for 8% less time, which is not worth deviating from the sampling
+    // quirc proved. The 8% is itself informative — cutting the sampler's work
+    // by 44% barely moved total time, so the constraint is how many attempts
+    // the ladder makes, not what each sample costs.
+    const x3 = (x + 0.3 - 3.5) / span;
+    const x5 = (x + 0.5 - 3.5) / span;
+    const x7 = (x + 0.7 - 3.5) / span;
+    const y3 = (y + 0.3 - 3.5) / span;
+    const y5 = (y + 0.5 - 3.5) / span;
+    const y7 = (y + 0.7 - 3.5) / span;
+
+    return (
+      sampleAt(x3, y3) +
+      sampleAt(x5, y3) +
+      sampleAt(x7, y3) +
+      sampleAt(x3, y5) +
+      sampleAt(x5, y5) +
+      sampleAt(x7, y5) +
+      sampleAt(x3, y7) +
+      sampleAt(x5, y7) +
+      sampleAt(x7, y7)
+    );
+  };
 
   /** The square ring `radius` modules out from a centre. */
   const ring = (cx: number, cy: number, radius: number): number => {
