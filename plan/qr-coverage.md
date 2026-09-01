@@ -144,6 +144,50 @@ changes often.
    deliberately NOT added: `estimateSize` returns null on only 29 of 557
    images corpus-wide (5.2%), concentrated in exactly the categories that fail
    downstream anyway.
+
+   ### Why it fails: an error budget, not a broken stage
+
+   The literature first ruled out the obvious remaining suspects. The Nyquist
+   study (Sensors 22(19):7230) puts the practical floor at **3-3.5 pixels per
+   module**; these images measure **6.4-10.7**, so they are not
+   resolution-limited. BoofCV's `QrCodeBinaryGridReader` reads the *greyscale*
+   image with a 5-point majority vote per module and a threshold bilinearly
+   interpolated between four values measured at the symbol's own corners —
+   implemented and tested here, it moved timing accuracy by +/-2 points and
+   decoded nothing, so thresholding is not the fault either.
+
+   What the sampled grid actually needed was a uniform sub-module **phase**
+   shift. Scanning scale and phase independently finds the optimum at scale
+   exactly **1.000** on both axes — no pitch error — with a shift of about
+   (+0.2, -0.2) modules bringing finders to 96-98% *and* timing to 76-83%
+   together, the first self-consistent state reached. It still does not
+   decode.
+
+   Because the bitstream layer is not the problem either: fed perfect
+   matrices, `decodeMatrix` round-trips **every version through 38**,
+   including the v26 and v32 sizes that fail as photographs.
+
+   The measurement that explains the category is the error budget. Injecting
+   random module errors into a perfect symbol:
+
+   | module error | v26 (121x121) | v38 (169x169) |
+   | ------------ | ------------- | ------------- |
+   | 0.5%         | 5/5           | 5/5           |
+   | 1.0%         | 5/5           | 5/5           |
+   | 2.0%         | **0/5**       | **0/5**       |
+
+   A large symbol tolerates **1% module error and fails at 2%**. The cliff is
+   that sharp because Reed-Solomon works on codewords: at 1% most 8-module
+   codewords are clean, and at 2% nearly every one carries a bad bit, so 49
+   blocks exhaust their correction capacity simultaneously.
+
+   The best grids measured here read timing at 83-96%, i.e. **4-17% module
+   error — between 4x and 17x over budget**. That is not a near miss that
+   better geometry closes. It also explains why five separate sources of
+   correct information each changed nothing: every one removes *some* error,
+   but the requirement is <=1%, and a version 40 symbol allows at most 313 of
+   its 31,329 modules to be wrong. A version 1 symbol allows ~4 of 441, which
+   is why small symbols are forgiving and these are not.
    The surface sags non-linearly between the finders — timing accuracy runs
    100% at both ends and 0% in the middle — but correcting that is
    demonstrably not sufficient: a grid with 100% timing accuracy still
