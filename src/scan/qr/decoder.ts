@@ -17,9 +17,15 @@ import {
   binarizeGlobal,
   blur,
   close,
-  downscale
+  downscale,
+  invertMatrix
 } from "../binarize.js";
-import type { DecodedSymbol, GrayImage, SymbolDecoder } from "../types.js";
+import type {
+  BitMatrix,
+  DecodedSymbol,
+  GrayImage,
+  SymbolDecoder
+} from "../types.js";
 import {
   alignmentCentersFor,
   estimateCornerFromEdges,
@@ -101,11 +107,13 @@ const decodeBinarized = (
   invert: boolean,
   global = false,
   denoise = false,
-  deepSearch = false
+  deepSearch = false,
+  /** A prepared matrix, when the caller already has one for this pass. */
+  prepared?: BitMatrix
 ): DecodedSymbol | null => {
-  const binarized = global
-    ? binarizeGlobal(image, { invert })
-    : binarize(image, { invert });
+  const binarized =
+    prepared ??
+    (global ? binarizeGlobal(image, { invert }) : binarize(image, { invert }));
   const matrix = denoise ? close(binarized) : binarized;
 
   // Two detectors, pooled. Run-length scanning reads the 1:1:3:1:1 signature
@@ -412,13 +420,33 @@ export const createQrDecoder = ({
         // images whose modules are damaged, which is a different fault.
         const deep = deepSearch && !denoise && !global;
 
+        // Binarized once per pass, then flipped for the second polarity.
+        // Binarization is dominated by computing the adaptive threshold
+        // surface, and inversion only changes the comparison against it, so
+        // running it twice discards half that work on every rung.
+        const upright = global ? binarizeGlobal(image) : binarize(image);
+
         if (polarity !== `light-on-dark`) {
-          const normal = decodeBinarized(image, false, global, denoise, deep);
+          const normal = decodeBinarized(
+            image,
+            false,
+            global,
+            denoise,
+            deep,
+            upright
+          );
           if (normal !== null) return normal;
         }
 
         if (polarity !== `dark-on-light`) {
-          const inverted = decodeBinarized(image, true, global, denoise, deep);
+          const inverted = decodeBinarized(
+            image,
+            true,
+            global,
+            denoise,
+            deep,
+            invertMatrix(upright)
+          );
           if (inverted !== null) return inverted;
         }
       }
