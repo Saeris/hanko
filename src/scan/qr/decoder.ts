@@ -172,6 +172,23 @@ const decodeBinarized = (
     if (blobs.length > 0) triple = selectBestTriple([...patterns, ...blobs]);
   }
 
+  // Last resort: re-scan tolerating an outer run merged with adjacent content.
+  //
+  // A symbol printed without its quiet zone puts a dark element against the
+  // finder's outer ring, so the leading or trailing dark run grows without
+  // bound and the 1:1:3:1:1 test fails on runs that are otherwise perfect.
+  // Measuring the module from the interior instead recovers those.
+  //
+  // Guarded the same way as the blob fallback, and for a stronger reason: as
+  // the only rule it roughly triples the candidate rows, which took the corpus
+  // from 70.2% to 64.5% — `high_version` to zero — and made the benchmark five
+  // times slower. Behind a "found something, but not three" guard it costs
+  // nothing on symbols whose quiet zone is intact.
+  if (triple === null && patterns.length > 0) {
+    const merged = findFinderPatterns(matrix, true);
+    if (merged.length >= 3) triple = selectBestTriple(merged);
+  }
+
   if (triple === null) return null;
 
   const finders = orientFinders(triple);

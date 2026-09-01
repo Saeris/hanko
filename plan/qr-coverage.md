@@ -364,7 +364,7 @@ Failures break down by the stage that stops them:
   these images is not a localised region over an otherwise-good grid.
 - **Brute-forcing the format.** Format info is 15 bits with 32 legal values,
   so trying all of them is cheap and self-validating. It converts nothing,
-  because both format copies failing is a *symptom* of heavy damage rather
+  because both format copies failing is a _symptom_ of heavy damage rather
   than an independent gate — 30 BCH-protected bits in two well-separated
   corners do not both fail unless the damage is extensive.
 
@@ -405,7 +405,7 @@ Two distinct populations, and they need opposite things:
 - **`pathological` produces no grid at all** — median 0% means no
   combination of detector, binarization, transform and size lands on the
   symbol. Its failures are detection, not registration or correction, and it
-  is the one category where a different *locator* rather than a better fit is
+  is the one category where a different _locator_ rather than a better fit is
   the honest next step.
 
 Also checked and worth not re-deriving: pairing the centre-based transform

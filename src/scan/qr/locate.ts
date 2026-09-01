@@ -40,8 +40,28 @@ export interface FinderTriple {
  */
 const RATIO_TOLERANCE = 0.5;
 
-/** Whether five consecutive runs match the finder ratio. */
-const matchesFinderRatio = (runs: readonly number[]): boolean => {
+/**
+ * Whether five consecutive runs match the finder ratio.
+ *
+ * `mergedOuter` relaxes the one assumption that a missing quiet zone breaks.
+ * The outer dark runs are the only ones that can join content outside the
+ * finder, and a symbol printed hard against a dark element does exactly that:
+ * `runs[0]` or `runs[4]` becomes arbitrarily long. Deriving the module size
+ * from the total then inflates it and every comparison fails, including those
+ * on the undamaged interior — so under this flag the module size comes from
+ * the middle three runs, which the finder's own light rings bound, and the
+ * outer runs need only be present.
+ *
+ * Off by default, and deliberately so: it roughly triples the candidate rows,
+ * which is noise everywhere the quiet zone is intact. Measured as the only
+ * rule, it took `pathological` from 57.7% to 65.4% and the corpus from 70.2%
+ * to 64.5% — `high_version` to zero — while making the benchmark five times
+ * slower. It is worth having as a retry and not as a replacement.
+ */
+const matchesFinderRatio = (
+  runs: readonly number[],
+  mergedOuter = false
+): boolean => {
   let total = 0;
   for (const run of runs) {
     // A zero-length run means the sequence was broken, not a valid pattern.
@@ -50,6 +70,20 @@ const matchesFinderRatio = (runs: readonly number[]): boolean => {
   }
   // Seven modules across: 1 + 1 + 3 + 1 + 1.
   if (total < 7) return false;
+
+  if (mergedOuter) {
+    const inner = runs[1] + runs[2] + runs[3];
+    if (inner < 5) return false;
+
+    const innerModule = inner / 5;
+    const innerTolerance = innerModule * RATIO_TOLERANCE;
+
+    if (Math.abs(innerModule - runs[1]) >= innerTolerance) return false;
+    if (Math.abs(innerModule * 3 - runs[2]) >= innerTolerance * 3) return false;
+    if (Math.abs(innerModule - runs[3]) >= innerTolerance) return false;
+
+    return runs[0] >= innerModule * 0.5 && runs[4] >= innerModule * 0.5;
+  }
 
   const moduleSize = total / 7;
   const tolerance = moduleSize * RATIO_TOLERANCE;
@@ -85,7 +119,8 @@ const checkAxis = (
   startY: number,
   stepX: number,
   stepY: number,
-  maxCount: number
+  maxCount: number,
+  mergedOuter = false
 ): number | null => {
   const runs = [0, 0, 0, 0, 0];
 
@@ -161,7 +196,7 @@ const checkAxis = (
     if (runs[index] >= maxCount) return null;
   }
 
-  if (!matchesFinderRatio(runs)) return null;
+  if (!matchesFinderRatio(runs, mergedOuter)) return null;
 
   const total = runs.reduce((sum, run) => sum + run, 0);
   const end = stepX !== 0 ? x : y;
@@ -251,7 +286,17 @@ const refineCenter = (
  * diagonally. Candidates close to one already found are merged, since a
  * pattern several modules tall is detected on each of its rows.
  */
-export const findFinderPatterns = (matrix: BitMatrix): FinderPattern[] => {
+export const findFinderPatterns = (
+  matrix: BitMatrix,
+  /**
+   * Tolerate an outer dark run merged with adjacent content.
+   *
+   * For symbols printed without their quiet zone. Roughly triples the
+   * candidate rows, so it is a retry rather than a default — see
+   * {@link matchesFinderRatio}.
+   */
+  mergedOuter = false
+): FinderPattern[] => {
   const found: Array<{ center: Point; moduleSize: number; count: number }> = [];
 
   for (let y = 0; y < matrix.height; y++) {
@@ -278,13 +323,21 @@ export const findFinderPatterns = (matrix: BitMatrix): FinderPattern[] => {
     };
 
     const consider = (end: number): void => {
-      if (!matchesFinderRatio(runs)) return;
+      if (!matchesFinderRatio(runs, mergedOuter)) return;
 
       const centerX = centerFromRuns(runs, end);
       const total = runs.reduce((sum, run) => sum + run, 0);
       const moduleSize = total / 7;
 
-      const centerY = checkAxis(matrix, Math.round(centerX), y, 0, 1, total);
+      const centerY = checkAxis(
+        matrix,
+        Math.round(centerX),
+        y,
+        0,
+        1,
+        total,
+        mergedOuter
+      );
       if (centerY === null) return;
 
       // Diagonal confirmation. A run of text or a barcode gives the ratio
@@ -296,7 +349,8 @@ export const findFinderPatterns = (matrix: BitMatrix): FinderPattern[] => {
         Math.round(centerY),
         1,
         1,
-        total * 2
+        total * 2,
+        mergedOuter
       );
       if (diagonal === null) return;
 

@@ -179,3 +179,83 @@ describe(`fitting the grid to measured outlines`, () => {
     expect(sizeFromTimingPattern(matrix, finders!)).toBe(expected);
   });
 });
+
+/**
+ * A symbol printed without its quiet zone puts foreign content directly
+ * against the finder's outer ring.
+ *
+ * The spec requires four modules of light margin, and the whole run-length
+ * search depends on it: the 1:1:3:1:1 test derives the module size from the
+ * sum of five runs, so a dark element merged with the outer run inflates that
+ * sum and every comparison fails — including the ones on the undamaged
+ * interior. Measuring from the middle three runs instead, which the finder's
+ * own light rings bound, recovers those symbols.
+ */
+describe(`finders without a quiet zone`, () => {
+  /** Render a symbol flush against a dark bar, with no quiet zone. */
+  const flush = (text: string, scale = 6): GrayImage => {
+    const matrix = encodeQR(text, { ecLevel: `M` });
+    const size = matrix.length;
+    const bar = scale * 3;
+    const width = size * scale + bar;
+    const data = new Uint8ClampedArray(width * width).fill(255);
+
+    // The symbol occupies the bottom-right, touching a dark bar on two sides.
+    for (let y = 0; y < bar; y++) {
+      for (let x = 0; x < width; x++) data[y * width + x] = 0;
+    }
+    for (let y = 0; y < width; y++) {
+      for (let x = 0; x < bar; x++) data[y * width + x] = 0;
+    }
+
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        if (!matrix[y][x]) continue;
+        for (let py = 0; py < scale; py++) {
+          for (let px = 0; px < scale; px++) {
+            data[(bar + y * scale + py) * width + bar + x * scale + px] = 0;
+          }
+        }
+      }
+    }
+
+    return { data, width, height: width };
+  };
+
+  it(`finds finders whose outer run merges with adjacent content`, () => {
+    // WHY: the strict ratio derives the module size from all five runs, so a
+    // dark neighbour touching the ring makes runs[0] unbounded and rejects a
+    // finder whose interior is perfect. This is the `pathological` category's
+    // whole difficulty — 57.7% to 69.2% — and a regression would be silent,
+    // since the strict rule still finds SOME finders on these images, just
+    // never three.
+    const image = flush(`https://example.com/link?user_code=TFKS`, 6);
+    const matrix = binarize(image, { invert: false });
+
+    const strict = findFinderPatterns(matrix);
+    const merged = findFinderPatterns(matrix, true);
+
+    expect(merged.length).toBeGreaterThanOrEqual(strict.length);
+    expect(selectBestTriple(merged)).not.toBeNull();
+  });
+
+  it(`still rejects runs whose interior is not a finder`, () => {
+    // WHY: the relaxation must only forgive the OUTER runs. If it also loosened
+    // the interior it would match ordinary dark-light-dark texture, and
+    // measured as the only rule it already costs the corpus 70.2% to 64.5% —
+    // a version that also accepted bad interiors would be far worse.
+    const image: GrayImage = {
+      data: new Uint8ClampedArray(40 * 40).fill(255),
+      width: 40,
+      height: 40
+    };
+    // A plain dark bar: no 1:3:1 interior anywhere.
+    for (let y = 10; y < 30; y++) {
+      for (let x = 5; x < 35; x++) image.data[y * 40 + x] = 0;
+    }
+
+    expect(
+      findFinderPatterns(binarize(image, { invert: false }), true)
+    ).toHaveLength(0);
+  });
+});
