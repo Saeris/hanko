@@ -126,6 +126,19 @@ const UPSCALE_LIMIT = 2_000_000;
 const NOISE_CANDIDATES = 60;
 
 /**
+ * Binarization passes, cheapest-per-recovery first.
+ *
+ * `[denoise, global]`. See the loop in `attempt` for the measurements behind
+ * the order.
+ */
+const PASSES: ReadonlyArray<readonly [boolean, boolean]> = [
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true]
+];
+
+/**
  * Fixed thresholds to try when every adaptive choice has failed.
  *
  * Spread across the range rather than concentrated, because the thresholds
@@ -545,50 +558,62 @@ export const createQrDecoder = ({
     // Last in the ladder because it is the most destructive: closing erases
     // real detail as readily as noise, so it must only run once everything
     // gentler has failed.
-    for (const denoise of [false, true]) {
-      for (const global of [false, true]) {
-        // The corner search runs only on the plainest binarization, not on
-        // every combination. It costs about 48ms per candidate size and three
-        // sizes are tried, so allowing it inside all four denoise/global
-        // combinations across both polarities multiplied it eightfold — over
-        // a second per preprocessing pass, and the ladder has several.
-        //
-        // A symbol that needs denoising AND a corner search was not going to
-        // decode anyway: the search corrects geometry, and denoising is for
-        // images whose modules are damaged, which is a different fault.
-        const deep = deepSearch && !denoise && !global;
+    // Ordered by cost per ATTEMPT, which is not cost per recovery.
+    //
+    // Instrumented across a quarter of the corpus, the four combinations
+    // recover 107 / 13 / 3 / 2 images at 646 / 4949 / 7729 / 15124 ms per
+    // recovery — so plain/local is four fifths of every success at an eighth
+    // the cost of the next best, and it must come first.
+    //
+    // But reordering the other three by that same measure — putting
+    // denoise/local ahead of plain/global, which recovers four times as
+    // cheaply per hit — cost the 120ms budgeted rate two images. Under a
+    // budget what matters is what each attempt COSTS, not what it eventually
+    // yields: a global binarization is 14ms against denoising's 35ms, so it
+    // deserves the earlier slot even though it wins less often. Ranking by
+    // yield spends the budget before the cheap pass gets its turn.
+    for (const [denoise, global] of PASSES) {
+      // The corner search runs only on the plainest binarization, not on
+      // every combination. It costs about 48ms per candidate size and three
+      // sizes are tried, so allowing it inside all four denoise/global
+      // combinations across both polarities multiplied it eightfold — over
+      // a second per preprocessing pass, and the ladder has several.
+      //
+      // A symbol that needs denoising AND a corner search was not going to
+      // decode anyway: the search corrects geometry, and denoising is for
+      // images whose modules are damaged, which is a different fault.
+      const deep = deepSearch && !denoise && !global;
 
-        // Binarized once per pass, then flipped for the second polarity.
-        // Binarization is dominated by computing the adaptive threshold
-        // surface, and inversion only changes the comparison against it, so
-        // running it twice discards half that work on every rung.
-        const upright = global ? binarizeGlobal(image) : binarize(image);
+      // Binarized once per pass, then flipped for the second polarity.
+      // Binarization is dominated by computing the adaptive threshold
+      // surface, and inversion only changes the comparison against it, so
+      // running it twice discards half that work on every rung.
+      const upright = global ? binarizeGlobal(image) : binarize(image);
 
-        if (polarity !== `light-on-dark`) {
-          const normal = decodeBinarized(
-            image,
-            false,
-            global,
-            denoise,
-            deep,
-            upright,
-            exhausted
-          );
-          if (normal !== null) return normal;
-        }
+      if (polarity !== `light-on-dark`) {
+        const normal = decodeBinarized(
+          image,
+          false,
+          global,
+          denoise,
+          deep,
+          upright,
+          exhausted
+        );
+        if (normal !== null) return normal;
+      }
 
-        if (polarity !== `dark-on-light`) {
-          const inverted = decodeBinarized(
-            image,
-            true,
-            global,
-            denoise,
-            deep,
-            invertMatrix(upright),
-            exhausted
-          );
-          if (inverted !== null) return inverted;
-        }
+      if (polarity !== `dark-on-light`) {
+        const inverted = decodeBinarized(
+          image,
+          true,
+          global,
+          denoise,
+          deep,
+          invertMatrix(upright),
+          exhausted
+        );
+        if (inverted !== null) return inverted;
       }
     }
 
@@ -696,7 +721,64 @@ export const createQrDecoder = ({
         findFinderPatterns(binarize(candidate)).length > 0 ||
         findFinderPatterns(binarize(candidate, { invert: true })).length > 0;
 
-      if (!hasCandidate(image) && !hasCandidate(blur(image, radius))) {
+      // Run on a downscaled copy when the frame is large enough to spare it.
+      //
+      // The gate exists to make an empty frame cheap, and on a 2.4MP frame it
+      // had become more expensive than the rungs it protects: `hasCandidate`
+      // does two binarizations and two finder scans, it is called twice, and
+      // the blurred call pays 77ms for the blur alone — 64% of the 120ms
+      // budget a viewfinder runs at, before a single retry.
+      //
+      // Halving each dimension quarters every one of those costs. A finder
+      // large enough for the ladder to recover survives it: the gate only
+      // needs to know whether ANY candidate exists anywhere, not to locate it
+      // precisely.
+      // A mip chain, built lazily and shared.
+      //
+      // The ladder asks for the same reductions more than once — the gate and
+      // the downscale rung both want half size, and the blurred gate and the
+      // blur rung both want the same radius at full size. Each was recomputed,
+      // and on a 2.4MP frame a blur is 77ms and a halving 6ms.
+      //
+      // Levels are cached rather than precomputed because most frames never
+      // reach the rungs that need them: an empty frame should pay for one
+      // reduction, not a whole pyramid.
+      const levels = new Map<number, GrayImage>([[1, image]]);
+      const level = (factor: number): GrayImage => {
+        const cached = levels.get(factor);
+        if (cached !== undefined) return cached;
+        const built = downscale(image, factor);
+        levels.set(factor, built);
+        return built;
+      };
+
+      const blurred = new Map<GrayImage, GrayImage>();
+      const blurOf = (source: GrayImage, r: number): GrayImage => {
+        const cached = blurred.get(source);
+        if (cached !== undefined) return cached;
+        const built = blur(source, r);
+        blurred.set(source, built);
+        return built;
+      };
+
+      const gateImage =
+        Math.min(image.width, image.height) >= 600 ? level(2) : image;
+      const gateRadius = Math.max(
+        2,
+        Math.round(Math.min(gateImage.width, gateImage.height) / 500)
+      );
+
+      // The cheap check first, and full resolution only to overturn a
+      // rejection. An empty frame — the common case, and the one this exists
+      // for — pays only the quarter-size pass; a frame the small pass doubts
+      // costs one more scan rather than losing a symbol, which downscaling
+      // alone measured at one image.
+      if (
+        !hasCandidate(gateImage) &&
+        !hasCandidate(blurOf(gateImage, gateRadius)) &&
+        (gateImage === image ||
+          (!hasCandidate(image) && !hasCandidate(blurOf(image, radius))))
+      ) {
         return null;
       }
 
@@ -715,18 +797,10 @@ export const createQrDecoder = ({
       if (Math.min(image.width, image.height) >= 600) {
         for (const factor of [2, 3]) {
           if (spent()) return null;
-          const smaller = attempt(downscale(image, factor));
+          const smaller = attempt(level(factor));
           if (smaller !== null) return smaller;
         }
       }
-
-      if (spent()) return null;
-      const offset = attempt(shifted(image));
-      if (offset !== null) return offset;
-
-      if (spent()) return null;
-      const blurred = attempt(blur(image, radius));
-      if (blurred !== null || !retryBlurred) return blurred;
 
       // Rectify and re-read. A projective transform already corrects
       // perspective during sampling, so this is not about geometry — it is
@@ -746,10 +820,33 @@ export const createQrDecoder = ({
         if (rectified !== null) return rectified;
       }
 
-      // Last of all: the corner search, the single most expensive stage in
-      // the decoder. Run earlier it starves everything after it — measured as
-      // `close` collapsing from 9 of 14 to 0 under a budget.
+      // Ordered by MEASURED cost per image recovered, not by when each rung
+      // was written or by the cost of its preprocessing step alone.
+      //
+      // Instrumenting every rung across a third of the corpus gives, in
+      // milliseconds spent per image it alone recovered: sharp 364, downscale
+      // x3 634, downscale x2 833, rectify 1534, shifted 4359, deep 6525,
+      // sweep 6049, blur 12549, upscale 61205. The ladder had been ordered by
+      // the cost of the transform each rung applies, which is a different
+      // quantity — enlarging is one cheap pass, but every stage after it then
+      // works on four times the pixels.
+      //
+      // Under a time budget the order IS a coverage decision: a rung that runs
+      // early spends budget the rungs behind it would have converted at a
+      // better rate.
       if (spent()) return null;
+      const offset = attempt(shifted(image));
+      if (offset !== null) return offset;
+
+      if (spent()) return null;
+      const deep = attempt(image, true, spent);
+      if (deep !== null) return deep;
+
+      if (spent()) return null;
+      const softened = attempt(blurOf(image, radius));
+      if (softened === null && !retryBlurred) return null;
+      if (softened !== null) return softened;
+
       // The mirror of downscaling: a symbol small in frame. Local
       // binarization thresholds over a fixed 8px block, so a symbol at two or
       // three pixels per module has one block spanning several of them —
@@ -769,9 +866,6 @@ export const createQrDecoder = ({
         const larger = attempt(upscale(image, 2));
         if (larger !== null) return larger;
       }
-
-      const deep = attempt(image, true, spent);
-      if (deep !== null) return deep;
 
       // Last: sweep a plain threshold across its range.
       //

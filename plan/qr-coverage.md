@@ -51,7 +51,7 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 ## Real-photograph coverage
 
 The 718-image BoofCV benchmark, which is photographs rather than renders.
-Overall **73.0%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
+Overall **73.1%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
 ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 
 | condition                               | rate      | what is known                   |
@@ -455,6 +455,57 @@ in candidate count; moving the refine coefficients off dictionary-mode
 property access into a typed array; and skipping the deep search when the
 candidate count is implausible. A camera in low light produces this frame, so
 it is guarded by a test.
+
+### Pipeline order
+
+Rungs accumulated one at a time, each justified on its own, so the sequence was
+measured as a whole. Instrumented across a third of the corpus, milliseconds
+spent per image a rung alone recovered:
+
+| rung          | ms/hit | | rung        | ms/hit    |
+| ------------- | ------ |-| ----------- | --------- |
+| first pass    | 364    | | shifted     | 4,359     |
+| downscale x3  | 634    | | sweep       | 6,049     |
+| downscale x2  | 833    | | deep search | 6,525     |
+| rectify       | 1,534  | | blur        | 12,549    |
+|               |        | | upscale     | **61,205** |
+
+Two things came out of it, one of them negative.
+
+**Reordering the rungs by that measure changed nothing** — 73.0% and 54.3%
+before and after. At 120ms the budget is spent before the ladder reaches
+anything past the first few rungs, so their order cannot matter; unlimited runs
+all of them regardless. The ordering that affects coverage is at the FRONT.
+
+**The early-exit gate was the real cost.** It ran two binarizations and two
+finder scans on the full frame, twice — once sharp, once blurred — and a blur
+on a 2.4MP frame is **77ms**, 64% of the whole budget, before a single retry.
+The recorded figure justifying that placement was 28ms, measured on a 1024x768
+frame; cost scales with pixels and the corpus runs at 1600px.
+
+Running the gate on a half-size copy quarters all of it. That alone lost one
+image, so the full-resolution check is kept as a fallback that only runs to
+overturn a rejection: an empty frame — the case the gate exists for — pays only
+the cheap pass. Corpus 73.0% -> 73.1%, budgeted 54.3% -> 54.5%, unlimited
+runtime 111s -> 102s.
+
+Reductions and blurs are now memoised across the ladder, since the gate and the
+downscale rung both want half size and the blurred gate and the blur rung both
+want the same radius. Built lazily, because most frames never reach the rungs
+that need them.
+
+### Cost per attempt is not cost per recovery
+
+Every attempt runs four binarization combinations. Measured, they recover
+107 / 13 / 3 / 2 images at 646 / 4949 / 7729 / 15124 ms per recovery, so
+plain/local is four fifths of all successes at an eighth the cost of the next.
+
+Reordering the other three by that same ranking — denoise/local ahead of
+plain/global — **cost two images** at 120ms. Under a budget what matters is
+what an attempt costs, not what it eventually yields: a global binarization is
+14ms against denoising's 35ms, so it earns the earlier slot even though it wins
+less often. Ranking by yield spends the budget before the cheap pass gets a
+turn.
 
 `timeBudgetMs` defaults to 120ms. It is a blunt instrument: the full corpus
 reads **62.7% unlimited against 40.3% at 120ms**, and the curve is still
