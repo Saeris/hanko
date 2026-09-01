@@ -154,45 +154,57 @@ export const binarizeGlobal = (
  * it cannot close a real one-module gap at any usable resolution.
  */
 export const close = (matrix: BitMatrix): BitMatrix => {
-  const { width, height } = matrix;
+  const { width, height, bits } = matrix;
+
+  // Separable. A 3x3 square structuring element factors into a horizontal
+  // pass and a vertical one, because a 3x3 neighbourhood is the union of
+  // three 1x3 neighbourhoods. That turns nine reads per pixel into six, and
+  // removes the inner bounds checks and early-exit branches entirely.
+  //
+  // Worth doing: measured with deoptkit, this function was 54 of 327 JS ticks
+  // — 17% of the decoder's CPU — as the LAST rung in the retry ladder.
+  const horizontal = new Uint8Array(width * height);
   const dilated = new Uint8Array(width * height);
+  const vertical = new Uint8Array(width * height);
   const output = new Uint8Array(width * height);
 
+  // Dilate: a pixel is set if any of its three horizontal neighbours is.
   for (let y = 0; y < height; y++) {
+    const row = y * width;
     for (let x = 0; x < width; x++) {
-      let any = 0;
-      for (let dy = -1; dy <= 1 && any === 0; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const px = x + dx;
-          const py = y + dy;
-          if (px < 0 || py < 0 || px >= width || py >= height) continue;
-          if (matrix.bits[py * width + px] === 1) {
-            any = 1;
-            break;
-          }
-        }
-      }
-      dilated[y * width + x] = any;
+      const left = x > 0 ? bits[row + x - 1] : 0;
+      const right = x + 1 < width ? bits[row + x + 1] : 0;
+      horizontal[row + x] = bits[row + x] | left | right;
+    }
+  }
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    const above = y > 0 ? row - width : row;
+    const below = y + 1 < height ? row + width : row;
+    for (let x = 0; x < width; x++) {
+      dilated[row + x] =
+        horizontal[row + x] | horizontal[above + x] | horizontal[below + x];
     }
   }
 
+  // Erode: a pixel survives only if all three neighbours are set. Outside the
+  // image counts as set, so erosion does not eat the border and shrink a
+  // symbol that runs to the frame edge.
   for (let y = 0; y < height; y++) {
+    const row = y * width;
     for (let x = 0; x < width; x++) {
-      let all = 1;
-      for (let dy = -1; dy <= 1 && all === 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const px = x + dx;
-          const py = y + dy;
-          // Outside the image counts as set, so erosion does not eat the
-          // border and shrink a symbol that runs to the frame edge.
-          if (px < 0 || py < 0 || px >= width || py >= height) continue;
-          if (dilated[py * width + px] === 0) {
-            all = 0;
-            break;
-          }
-        }
-      }
-      output[y * width + x] = all;
+      const left = x > 0 ? dilated[row + x - 1] : 1;
+      const right = x + 1 < width ? dilated[row + x + 1] : 1;
+      vertical[row + x] = dilated[row + x] & left & right;
+    }
+  }
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    const above = y > 0 ? row - width : row;
+    const below = y + 1 < height ? row + width : row;
+    for (let x = 0; x < width; x++) {
+      output[row + x] =
+        vertical[row + x] & vertical[above + x] & vertical[below + x];
     }
   }
 
