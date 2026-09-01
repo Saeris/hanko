@@ -178,60 +178,41 @@ Not yet built; `timeBudgetMs: 0` is correct for stills today.
 
 ### What is known about the remaining failures
 
-**`high_version` (0%)** — extensively diagnosed, still unsolved. Four
-hypotheses have been tested and disproved, which is worth recording in full
-because each looked obviously correct beforehand.
+**`high_version` (2.9%)** — the category is not what its name suggests, and
+that misled every attempt to fix it for several rounds.
 
-What is definitely RIGHT on `image003` (a version 40, 177-module symbol):
-the sampled grid reproduces the top-left finder **49/49 modules**, format and
-version read cleanly (v40, ecLevel M, mask 3), the data region yields exactly
-3706 codewords in exactly 49 blocks — every structural number the spec
-predicts. What is wrong: **all 49 blocks are beyond Reed-Solomon repair.**
+These are **not difficult images**. They are versions 25 and 40 — the largest
+QRs that exist — photographed nearly flat-on at a comfortable 8 to 14 pixels
+per module. `zxing-wasm` reads 12 of 12. There is no distortion, no damage, no
+lighting problem. What makes them hard is CAPACITY: 177x177 modules, 864
+characters, 3706 codewords in 49 Reed-Solomon blocks.
 
-Disproved:
+That reframes it as a scale-dependent problem rather than a geometric one,
+which is why rounds of work on corners, warp and piecewise sampling changed
+nothing.
 
-1. _Wrong grid size._ Every neighbouring size (±12 modules) was tried; none
-   decode.
-2. _Fourth corner misplaced._ A 7x7 search over corner positions, scored by
-   how well the sampled timing pattern alternates, recovered nothing.
-3. _Cumulative perspective drift._ Measuring predicted against actual module
-   boundaries along the timing row shows drift that OSCILLATES (-0.59, +0.44,
-   -0.31, +0.52, +0.34, +0.02 modules) rather than accumulating. Perspective
-   error would grow smoothly in one direction.
-4. _Sub-pixel sampling jitter._ Majority-vote sampling at radius 0, 1 and 2
-   makes no difference at all — 0/12 in every case.
+What is now known, measured against `zxing-wasm` corner positions:
 
-Structure perfect, content noise, error distributed across every block rather
-than concentrated.
+- **The true finder patterns ARE detected**, all three, within 1 to 4 pixels
+  on every image checked. Detection is not the problem.
+- **Module size is consistently over-estimated** — 8.4 against a true 6.3 on
+  one image — which makes `estimateSize` under-report: 145, 161, even 53
+  where the truth is 177. Nine of twelve sizes are wrong.
+- **Forcing the true size still decodes 0 of 12**, so size is a symptom
+  rather than the cause.
+- **A version 40 symbol produces 7 to 13 finder candidates**, most of them
+  false positives from inside the data region: 3706 codewords of dense
+  pattern throw up the 1:1:3:1:1 signature by chance many times. On one image
+  the search picked three interior blobs 431px apart and concluded 51 modules
+  while the real finders sat at the corners.
+- **Scoring every candidate triple with `scoreTransform` still decodes 0 of
+  12**, even though the correct triple is present among the candidates.
 
-### What comparing against a working decoder established
-
-`zxing-wasm` decodes `image003` and reports its corner positions, which makes
-it a ground-truth oracle for every geometric stage. Diffing against it:
-
-- **Our finder location is correct.** Finder-centre distance 1140px against
-  ZXing's implied 1140px; module size 6.72 against 6.71; size 176.6 -> 177,
-  version 40. Every one of those matches.
-- **Our fourth-corner estimate is badly wrong**: ours (1312, 1458) against
-  ZXing's (1377, 1456) — about 13 modules out. The parallelogram assumption
-  fails hard on this symbol, and the earlier +/-3-module corner search was
-  simply too small a window to find it. Hypothesis 2 above was under-tested
-  rather than disproved.
-- **Fixing the corner is still not sufficient.** Sampling with ZXing's corner
-  gives a provably correct grid — all three finders 49/49 modules, horizontal
-  timing 1.00, vertical timing 0.98, alignment pattern 22/25, format and
-  version reading cleanly — and decoding STILL fails, with every block
-  reporting a Reed-Solomon locator at its maximum degree of 14. The modules
-  are saturated with errors even though the grid is right.
-- **`decodeMatrix` itself is not the problem.** Pure matrix round trips
-  against etiket succeed at every version up to 38 with no imaging involved.
-
-So there are two independent faults, and only the first is understood. The
-second shows up only on photographed large symbols: geometry verifiably
-correct, module values substantially wrong. The next thing to try is dumping
-our sampled matrix beside one reconstructed from ZXing's own decode and
-diffing module by module, which would say WHERE the wrong modules are rather
-than how many.
+So: the right finders are found, the right triple is available, and something
+in selection or in the size derived from it still goes wrong. The next step
+is to score triples that include the KNOWN-correct finders and see whether
+they rank above the false ones — which distinguishes "the scorer cannot tell"
+from "the search never tries the right combination".
 
 **`glare` (3.6%)** and **`perspective` (9.3%)** are untouched so far.
 
