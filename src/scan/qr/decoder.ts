@@ -51,7 +51,8 @@ import {
   searchCorner,
   sampleGrid,
   transformForSymbol,
-  transformFromOutlines
+  transformFromOutlines,
+  sizeFromTimingPattern
 } from "./sample.js";
 
 /** Options for {@link createQrDecoder}. */
@@ -176,7 +177,15 @@ const decodeBinarized = (
   const finders = orientFinders(triple);
   if (finders === null) return null;
 
-  let size = estimateSize(finders);
+  // Size from the finder spans, and the timing pattern as a second opinion.
+  //
+  // `estimateSize` divides the finder span by the module size, so an error in
+  // the module size is multiplied by the module count. Under foreshortening
+  // the near arm measures wider than the far one and the quotient lands on the
+  // wrong multiple of four — or outside the legal range, which used to abort
+  // the decode outright on 7 of the remaining `perspective` failures.
+  const measured = sizeFromTimingPattern(matrix, finders);
+  let size = estimateSize(finders) ?? measured;
   if (size === null) return null;
 
   // First pass: assume the symbol is a parallelogram. Good enough to predict
@@ -232,7 +241,16 @@ const decodeBinarized = (
   // `perspective` 18 of 26 against four points' 4, `nominal` 60 of 109
   // against 38, and `glare` 9 of 31 against 3.
   if (decoded === null) {
-    for (const candidateSize of [size, size - 4, size + 4]) {
+    const candidates = [size, size - 4, size + 4];
+    // Counting timing transitions does not divide by anything, so it survives
+    // the foreshortening that defeats the span estimate. Tried after it rather
+    // than instead of it: the span estimate is right far more often, and
+    // sweeping scan lines to find the timing row is not free.
+    if (measured !== null && !candidates.includes(measured)) {
+      candidates.push(measured);
+    }
+
+    for (const candidateSize of candidates) {
       if (candidateSize < 21 || candidateSize > 177) continue;
 
       const fitted = transformFromOutlines(matrix, finders, candidateSize);

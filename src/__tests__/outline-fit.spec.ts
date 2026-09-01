@@ -7,7 +7,11 @@ import {
   orientFinders,
   selectBestTriple
 } from "../scan/qr/locate.js";
-import { fitTransform, transformFromOutlines } from "../scan/qr/sample.js";
+import {
+  fitTransform,
+  sizeFromTimingPattern,
+  transformFromOutlines
+} from "../scan/qr/sample.js";
 import type { GrayImage } from "../scan/types.js";
 
 /**
@@ -154,5 +158,24 @@ describe(`fitting the grid to measured outlines`, () => {
     const w = fitted!.a33;
     expect(fitted!.a31 / w).toBeCloseTo(finders!.topLeft.center.x, 0);
     expect(fitted!.a32 / w).toBeCloseTo(finders!.topLeft.center.y, 0);
+  });
+
+  it(`measures size by counting timing transitions`, () => {
+    // WHY: the span estimate divides by module size, so its error is
+    // multiplied by the module count — under foreshortening it lands on the
+    // wrong multiple of four or outside the legal range entirely, which used
+    // to abort the decode. Counting transitions divides by nothing: a
+    // compressed timing pattern still alternates exactly as many times. This
+    // pins that the count is exact on a symbol whose size is known.
+    const text = `https://example.com/link?user_code=TFKS`;
+    const expected = encodeQR(text, { ecLevel: `M` }).length;
+
+    const matrix = binarize(render(text, 6), { invert: false });
+    const finders = orientFinders(
+      selectBestTriple(findFinderPatterns(matrix)) ?? []
+    );
+    expect(finders).not.toBeNull();
+
+    expect(sizeFromTimingPattern(matrix, finders!)).toBe(expected);
   });
 });

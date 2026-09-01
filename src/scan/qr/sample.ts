@@ -351,6 +351,137 @@ export const transformFromOutlines = (
 };
 
 /**
+ * Measure the symbol's size by counting timing-pattern transitions.
+ *
+ * {@link estimateSize} divides the finder span by the module size, which
+ * multiplies any error in the module size by the module count. Under strong
+ * foreshortening the finder's own run lengths are inflated — the near arm
+ * measures wider than the far one — so the quotient lands on the wrong
+ * multiple of four, or outside the legal range entirely. Measured on the
+ * corpus, `estimateSize` returns null on 7 of the 22 remaining `perspective`
+ * failures.
+ *
+ * The timing pattern answers the question directly. It alternates once per
+ * module across the whole symbol, so COUNTING its transitions gives the module
+ * count with no division and no dependence on any measured width — a
+ * compressed timing pattern still alternates exactly as many times.
+ *
+ * The scan line has to be found rather than assumed: its offset from the
+ * finder centres is itself measured in module widths, which is the quantity in
+ * doubt. So several offsets are swept and the one whose runs are most uniform
+ * wins — the timing pattern is the one line in a symbol whose runs are all a
+ * single module long, which no row of data matches.
+ *
+ * Worth noting for anyone re-deriving this: measured BEFORE the twelve-point
+ * outline fit existed, this technique converted nothing, because every image
+ * it fixed then failed later anyway. It is worth 8 images now. A fix aimed at
+ * a constraint that is not yet binding measures as worthless even when it is
+ * correct.
+ */
+export const sizeFromTimingPattern = (
+  matrix: BitMatrix,
+  finders: FinderTriple
+): number | null => {
+  const { topLeft, topRight, bottomLeft } = finders;
+
+  const down = {
+    x: bottomLeft.center.x - topLeft.center.x,
+    y: bottomLeft.center.y - topLeft.center.y
+  };
+  const downLength = Math.hypot(down.x, down.y);
+  if (downLength === 0) return null;
+
+  const unitX = down.x / downLength;
+  const unitY = down.y / downLength;
+  const module = (topLeft.moduleSize + topRight.moduleSize) / 2;
+  if (module <= 0) return null;
+
+  let best: { runs: number; deviation: number } | null = null;
+
+  // The timing row sits 2.5 modules below the finder centres in principle.
+  // Swept rather than assumed, because that offset is measured in the very
+  // module width this function exists to avoid trusting.
+  for (let offset = 1.2; offset <= 4; offset += 0.15) {
+    const shiftX = unitX * module * offset;
+    const shiftY = unitY * module * offset;
+
+    const runs = runLengthsAlong(
+      matrix,
+      topLeft.center.x + shiftX,
+      topLeft.center.y + shiftY,
+      topRight.center.x + shiftX,
+      topRight.center.y + shiftY
+    );
+    if (runs === null || runs.length < 12) continue;
+
+    // Ignore the ends, which straddle the finders rather than the timing row.
+    const interior = runs.slice(2, -2);
+    if (interior.length < 8) continue;
+
+    const mean =
+      interior.reduce((total, run) => total + run, 0) / interior.length;
+    if (mean <= 0) continue;
+
+    const variance =
+      interior.reduce((total, run) => total + (run - mean) ** 2, 0) /
+      interior.length;
+    const deviation = Math.sqrt(variance) / mean;
+
+    if (best === null || deviation < best.deviation) {
+      best = { runs: runs.length, deviation };
+    }
+  }
+
+  if (best === null) return null;
+
+  // The scan spans finder centre to finder centre: the run count covers the
+  // modules between them, and the finders themselves add the rest.
+  const estimate = best.runs + 11;
+  const snapped = Math.round((estimate - 17) / 4) * 4 + 17;
+  return snapped >= 21 && snapped <= 177 ? snapped : null;
+};
+
+/** Lengths of the constant-colour runs along a line, or null if it leaves the image. */
+const runLengthsAlong = (
+  matrix: BitMatrix,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number
+): number[] | null => {
+  const steps = Math.round(Math.hypot(toX - fromX, toY - fromY));
+  if (steps < 10) return null;
+
+  const runs: number[] = [];
+  let previous: number | null = null;
+  let length = 0;
+
+  for (let i = 0; i <= steps; i++) {
+    const x = Math.round(fromX + ((toX - fromX) * i) / steps);
+    const y = Math.round(fromY + ((toY - fromY) * i) / steps);
+    if (x < 0 || y < 0 || x >= matrix.width || y >= matrix.height) return null;
+
+    const value = matrix.bits[y * matrix.width + x];
+    if (previous === null) {
+      previous = value;
+      length = 1;
+      continue;
+    }
+
+    if (value === previous) {
+      length++;
+    } else {
+      runs.push(length);
+      previous = value;
+      length = 1;
+    }
+  }
+
+  runs.push(length);
+  return runs;
+};
+
+/**
  * Estimate the fourth corner, which has no finder pattern.
  *
  * Larger symbols carry an alignment pattern near it, and using that is more

@@ -51,27 +51,27 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 ## Real-photograph coverage
 
 The 718-image BoofCV benchmark, which is photographs rather than renders.
-Overall **68.8%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
+Overall **70.2%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
 ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 
-| condition                                | rate      | what is known                    |
-| ---------------------------------------- | --------- | -------------------------------- |
-| Multiple codes per frame (`lots`)        | 100.0%    |                                  |
-| Hard shadows (`shadows`)                 | 89.5%     | local binarization               |
-| Rotated (`rotations`)                    | 88.6%     |                                  |
-| Small in a large frame (`close`)         | 85.7%     | multi-scale retry, both ways     |
-| Ordinary photographs (`nominal`)         | 84.0%     | 250-image category, the largest  |
-| Even lighting (`brightness`)             | 78.6%     |                                  |
-| Motion blur (`blurred`)                  | 73.6%     | blur retry                       |
-| Screens and monitors (`monitor`)         | 72.0%     | low-pass retry defeats moire     |
-| Non-compliant symbols                    | 71.6%     |                                  |
-| Curved surfaces (`curved`)               | 68.7%     | piecewise sampling               |
-| Specular highlights (`bright_spots`)     | 63.6%     |                                  |
-| Glare                                    | 62.5%     |                                  |
-| Pathological / adversarial               | 57.7%     |                                  |
-| Perspective / oblique angles             | 48.8%     | finder DETECTION, not fitting    |
-| Physically damaged                       | 39.6%     |                                  |
-| **Very large symbols (`high_version`)**  | **14.7%** | see below                        |
+| condition                               | rate      | what is known                   |
+| --------------------------------------- | --------- | ------------------------------- |
+| Multiple codes per frame (`lots`)       | 100.0%    |                                 |
+| Hard shadows (`shadows`)                | 89.5%     | local binarization              |
+| Rotated (`rotations`)                   | 88.6%     |                                 |
+| Small in a large frame (`close`)        | 85.7%     | multi-scale retry, both ways    |
+| Ordinary photographs (`nominal`)        | 84.0%     | 250-image category, the largest |
+| Even lighting (`brightness`)            | 78.6%     |                                 |
+| Motion blur (`blurred`)                 | 73.6%     | blur retry                      |
+| Screens and monitors (`monitor`)        | 72.0%     | low-pass retry defeats moire    |
+| Non-compliant symbols                   | 71.6%     |                                 |
+| Curved surfaces (`curved`)              | 68.7%     | piecewise sampling              |
+| Specular highlights (`bright_spots`)    | 63.6%     |                                 |
+| Glare                                   | 62.5%     |                                 |
+| Pathological / adversarial              | 57.7%     |                                 |
+| Perspective / oblique angles            | 48.8%     | finder DETECTION, not fitting   |
+| Physically damaged                      | 39.6%     |                                 |
+| **Very large symbols (`high_version`)** | **14.7%** | see below                       |
 
 Re-measure rather than cite: every figure here is a snapshot of a ladder that
 changes often.
