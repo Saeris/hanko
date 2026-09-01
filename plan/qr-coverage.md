@@ -462,13 +462,13 @@ Rungs accumulated one at a time, each justified on its own, so the sequence was
 measured as a whole. Instrumented across a third of the corpus, milliseconds
 spent per image a rung alone recovered:
 
-| rung          | ms/hit | | rung        | ms/hit    |
-| ------------- | ------ |-| ----------- | --------- |
-| first pass    | 364    | | shifted     | 4,359     |
-| downscale x3  | 634    | | sweep       | 6,049     |
-| downscale x2  | 833    | | deep search | 6,525     |
-| rectify       | 1,534  | | blur        | 12,549    |
-|               |        | | upscale     | **61,205** |
+| rung         | ms/hit |     | rung        | ms/hit     |
+| ------------ | ------ | --- | ----------- | ---------- |
+| first pass   | 364    |     | shifted     | 4,359      |
+| downscale x3 | 634    |     | sweep       | 6,049      |
+| downscale x2 | 833    |     | deep search | 6,525      |
+| rectify      | 1,534  |     | blur        | 12,549     |
+|              |        |     | upscale     | **61,205** |
 
 Two things came out of it, one of them negative.
 
