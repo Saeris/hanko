@@ -298,6 +298,33 @@ platform: `getUserMedia` returns colour frames, and there is no depth track.
 It would require a native app, which is the opposite of this library's
 purpose.
 
+### Explicit resource management (`using`) — evaluated, not adopted
+
+Two reasons, and the first is decisive.
+
+**It is syntax, not an API.** MDN marks it "not Baseline — does not work in
+some of the most widely-used browsers", the same status as WebGPU. But the
+comparison flatters it: WebGPU is additive, so a platform without it falls
+back to the CPU path and loses nothing, while a platform that cannot PARSE
+`using` fails to load the module at all. There is no runtime fallback for a
+syntax error, so adopting it would narrow the library's reach rather than
+degrade gracefully.
+
+**There is almost nothing to dispose.** Every buffer here is a plain
+`Uint8Array` or `Uint8ClampedArray`, which the collector handles and which
+implement no `Symbol.dispose`. `using` does not free memory sooner — it calls
+a disposal method — and it is meant for handles needing explicit release:
+files, sockets, GPU resources.
+
+Measured before concluding: decoding one hard frame twelve times moves the
+heap 8MB to 20MB and back to 13MB, settling at 7MB after collection. That is
+healthy churn, not a leak, so there is no problem for disposal to solve.
+
+The one place it would genuinely fit is the WebGPU device and buffers in
+`gpu.ts`, which are released manually today. Worth revisiting if that path
+grows, and worth having in the consuming APPLICATION — which controls its own
+browser targets — rather than in a library that does not.
+
 ### Negative results, recorded so they are not re-attempted
 
 - **Majority-vote sampling** over each module's central region (the
