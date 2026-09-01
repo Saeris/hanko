@@ -153,7 +153,7 @@ const decodeBinarized = (
   const finders = orientFinders(triple);
   if (finders === null) return null;
 
-  const size = estimateSize(finders);
+  let size = estimateSize(finders);
   if (size === null) return null;
 
   // First pass: assume the symbol is a parallelogram. Good enough to predict
@@ -197,17 +197,44 @@ const decodeBinarized = (
   let sampled = sampleGrid(matrix, rough, size);
   let decoded = sampled === null ? null : decodeMatrix(sampled);
 
+  // Each corner is tried at the estimated size and its neighbours. Size comes
+  // from finder spacing divided by module size, so an error in either lands
+  // on the wrong multiple of four — and rotation is the clearest case:
+  // between 43 and 47 degrees the module-size correction overshoots and the
+  // estimate reads 33 where the truth is 29, while 29 decodes perfectly at
+  // every one of those angles. Only the estimate was ever wrong.
+  //
+  // Nested rather than run as a separate pass because the two errors
+  // interact: correcting the size while holding a wrong corner still does not
+  // decode, so they have to vary together.
+  const sizes = [size, size - 4, size + 4].filter(
+    (candidate) => candidate >= 21 && candidate <= 177
+  );
+
   for (const corner of candidates) {
     if (decoded !== null) break;
-    const candidateTransform = transformForSymbol(finders, size, corner);
-    const candidateGrid = sampleGrid(matrix, candidateTransform, size);
-    if (candidateGrid === null) continue;
 
-    const candidateDecode = decodeMatrix(candidateGrid);
-    if (candidateDecode !== null) {
-      transform = candidateTransform;
-      sampled = candidateGrid;
-      decoded = candidateDecode;
+    for (const candidateSize of sizes) {
+      const candidateTransform = transformForSymbol(
+        finders,
+        candidateSize,
+        corner
+      );
+      const candidateGrid = sampleGrid(
+        matrix,
+        candidateTransform,
+        candidateSize
+      );
+      if (candidateGrid === null) continue;
+
+      const candidateDecode = decodeMatrix(candidateGrid);
+      if (candidateDecode !== null) {
+        transform = candidateTransform;
+        sampled = candidateGrid;
+        decoded = candidateDecode;
+        size = candidateSize;
+        break;
+      }
     }
   }
 
