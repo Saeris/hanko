@@ -208,11 +208,32 @@ What is now known, measured against `zxing-wasm` corner positions:
 - **Scoring every candidate triple with `scoreTransform` still decodes 0 of
   12**, even though the correct triple is present among the candidates.
 
-So: the right finders are found, the right triple is available, and something
-in selection or in the size derived from it still goes wrong. The next step
-is to score triples that include the KNOWN-correct finders and see whether
-they rank above the false ones — which distinguishes "the scorer cannot tell"
-from "the search never tries the right combination".
+What a module-by-module investigation established:
+
+- **Finder patterns sample at 100%** — 147 of 147 modules correct across all
+  three finders on two images, 145 of 147 on the third.
+- **Timing and alignment patterns sample at ~50%** — a coin flip. 203 of 322
+  timing modules, 615 of 1150 alignment modules.
+- **The error is not drift.** Timing accuracy by column on one image runs
+  100%, 70%, 50%, 70%, 55%, 80%, 100%, 100% — worst in the MIDDLE and perfect
+  at both ends. Another reaches **0%** at columns 68-88 before recovering to
+  100% by column 148. Zero percent is anti-correlation: the grid samples
+  exactly out of phase and reads every module as its neighbour. Drift would
+  degrade monotonically; this bows and returns, which is a non-linear
+  deviation a homography cannot express.
+- **Piecewise sampling helps and is not enough.** It takes one image's timing
+  from 78% to 98%, and it still does not decode.
+- **A grid with 100% timing still does not decode**, and trying all 32
+  mask/EC combinations on it repairs zero of 49 Reed-Solomon blocks. That
+  eliminates mask selection and EC level as causes.
+
+So the surface genuinely sags between the finders, and correcting the module
+grid is necessary but demonstrably not sufficient — something downstream
+fails even when the grid is verifiably right. Six hypotheses have now been
+tested and disproved on this category (wrong size, misplaced corner,
+cumulative drift, sampling jitter, finder-candidate pollution, mask/EC
+selection), which is worth stating plainly: the geometric search space is
+exhausted, and the remaining fault is not geometric.
 
 **`glare` (3.6%)** and **`perspective` (9.3%)** are untouched so far.
 
