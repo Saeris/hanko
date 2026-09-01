@@ -535,11 +535,24 @@ export const searchCorner = (
   size: number,
   moduleSize: number,
   alignmentCenters: readonly number[],
-  estimate: Point
+  estimate: Point,
+  /**
+   * Abandon the search when this returns true.
+   *
+   * Scoring 625 transforms is the single longest uninterrupted stretch in the
+   * decoder, and a budget checked only BETWEEN stages cannot bound it —
+   * measured, a 40ms budget produced a 209ms block and a 400ms budget a 603ms
+   * one. A budget that does not bound latency is not a budget.
+   */
+  exhausted?: () => boolean
 ): Transform[] => {
   const scored: Array<{ score: number; transform: Transform }> = [];
 
   for (let dy = -6; dy <= 6; dy += 0.5) {
+    // Checked per row rather than per candidate: 25 checks instead of 625,
+    // bounding the overrun to one row's work — under a millisecond.
+    if (exhausted?.() === true) break;
+
     for (let dx = -6; dx <= 6; dx += 0.5) {
       const corner = {
         x: estimate.x + dx * moduleSize,

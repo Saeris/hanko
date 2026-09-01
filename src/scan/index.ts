@@ -11,11 +11,17 @@
  */
 
 export { createQrDecoder } from "./qr/decoder.js";
-export { createProgressiveScanner } from "./qr/progressive.js";
+export {
+  createProgressiveScanner,
+  createWorkerScanner
+} from "./qr/progressive.js";
 export type {
   ProgressiveOptions,
-  ProgressiveScanner
+  ProgressiveScanner,
+  WorkerScanner
 } from "./qr/progressive.js";
+export { serveDecoder } from "./worker.js";
+export type { DecodeRequest, DecodeResponse } from "./worker.js";
 export { withClearance } from "./qr/locate.js";
 export type { QrDecoderOptions } from "./qr/decoder.js";
 

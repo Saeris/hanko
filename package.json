@@ -66,6 +66,13 @@
         "default": "./dist/scan/index.mjs"
       }
     },
+    "./scan/worker": {
+      "import": {
+        "development": "./src/scan/worker.ts",
+        "types": "./dist/scan/worker.d.mts",
+        "default": "./dist/scan/worker.mjs"
+      }
+    },
     "./handlers": {
       "import": {
         "development": "./src/handlers.ts",

@@ -109,7 +109,9 @@ const decodeBinarized = (
   denoise = false,
   deepSearch = false,
   /** A prepared matrix, when the caller already has one for this pass. */
-  prepared?: BitMatrix
+  prepared?: BitMatrix,
+  /** Abandon expensive stages when this returns true. */
+  exhausted?: () => boolean
 ): DecodedSymbol | null => {
   const binarized =
     prepared ??
@@ -296,13 +298,16 @@ const decodeBinarized = (
     for (const candidateSize of sizes) {
       if (decoded !== null) break;
 
+      if (exhausted?.() === true) break;
+
       for (const candidate of searchCorner(
         matrix,
         finders,
         candidateSize,
         moduleSize,
         alignmentCentersFor((candidateSize - 17) / 4),
-        estimated
+        estimated,
+        exhausted
       )) {
         const candidateGrid = sampleGrid(matrix, candidate, candidateSize);
         if (candidateGrid === null) continue;
@@ -389,7 +394,8 @@ export const createQrDecoder = ({
 }: QrDecoderOptions = {}): SymbolDecoder => {
   const attempt = (
     image: GrayImage,
-    deepSearch = false
+    deepSearch = false,
+    exhausted?: () => boolean
   ): DecodedSymbol | null => {
     // Local binarization first, then global. Neither dominates: local follows
     // a shadow across a page and is what makes unevenly-lit photographs
@@ -433,7 +439,8 @@ export const createQrDecoder = ({
             global,
             denoise,
             deep,
-            upright
+            upright,
+            exhausted
           );
           if (normal !== null) return normal;
         }
@@ -445,7 +452,8 @@ export const createQrDecoder = ({
             global,
             denoise,
             deep,
-            invertMatrix(upright)
+            invertMatrix(upright),
+            exhausted
           );
           if (inverted !== null) return inverted;
         }
@@ -610,7 +618,7 @@ export const createQrDecoder = ({
       // the decoder. Run earlier it starves everything after it — measured as
       // `close` collapsing from 9 of 14 to 0 under a budget.
       if (spent()) return null;
-      return attempt(image, true);
+      return attempt(image, true, spent);
     }
   };
 };

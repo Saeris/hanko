@@ -29,6 +29,7 @@ export default defineConfig({
       manifest.exports["./client"].import.development,
       manifest.exports["./approve"].import.development,
       manifest.exports["./scan"].import.development,
+      manifest.exports["./scan/worker"].import.development,
       manifest.exports["./handlers"].import.development,
       manifest.exports["./stores/memory"].import.development,
       manifest.exports["./stores/kv"].import.development

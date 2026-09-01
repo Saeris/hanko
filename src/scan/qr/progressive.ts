@@ -138,3 +138,143 @@ export const createProgressiveScanner = ({
     }
   };
 };
+
+/**
+ * Drive a decoder running in a worker.
+ *
+ * Same shape as {@link createProgressiveScanner} but asynchronous, because
+ * the work happens elsewhere. The main thread stays free: measured on a hard
+ * frame, an in-thread decode blocks 208ms at a 40ms budget and 481ms at
+ * 400ms, which at 60fps is 12 and 28 dropped frames respectively — a visible
+ * freeze on exactly the frames where someone is lining up a shot.
+ *
+ * Frames offered while a decode is in flight are DROPPED rather than queued.
+ * A camera produces frames faster than they can be decoded, and a queue would
+ * grow without bound while returning increasingly stale results; the next
+ * frame is always a better input than a backlogged one.
+ */
+export interface WorkerScanner {
+  /** Offer a frame. Resolves `null` if dropped, still ramping, or unreadable. */
+  scan(image: GrayImage): Promise<DecodedSymbol | null>;
+  /** Reset the effort ramp — call when the scene changes. */
+  reset(): void;
+  /** Stop the worker and release it. */
+  close(): void;
+  /** Whether a decode is currently in flight. */
+  readonly busy: boolean;
+}
+
+/**
+ * Wrap a worker in the progressive interface.
+ *
+ * The worker is supplied rather than constructed here, because how a worker
+ * is created is a bundler question — `new Worker(new URL(...), { type:
+ * "module" })` in Vite, a blob URL elsewhere — and a library that guessed
+ * would be wrong for most consumers.
+ */
+export const createWorkerScanner = (
+  worker: {
+    // `ArrayBufferLike[]` rather than `Transferable[]`: this package compiles
+    // without the DOM lib on purpose, and a buffer is the only thing
+    // transferred here.
+    postMessage: (message: unknown, transfer?: ArrayBufferLike[]) => void;
+    addEventListener?: (
+      type: string,
+      listener: (event: { data: unknown }) => void
+    ) => void;
+    on?: (type: string, listener: (message: unknown) => void) => void;
+    terminate?: () => void;
+  },
+  {
+    initialBudgetMs = 40,
+    maxBudgetMs = 400,
+    growth = 1.6
+  }: ProgressiveOptions = {}
+): WorkerScanner => {
+  let budget = initialBudgetMs;
+  let nextId = 0;
+  let inFlight = false;
+  const pending = new Map<
+    number,
+    (response: { result: DecodedSymbol | null }) => void
+  >();
+
+  const receive = (payload: unknown): void => {
+    // Narrowed by runtime checks rather than a cast: a DOM MessageEvent
+    // carries the payload on `.data` while a Node message IS the payload, and
+    // asserting one shape would silently misread the other.
+    if (payload === null || typeof payload !== `object`) return;
+
+    const envelope = payload as { data?: unknown };
+    const body: unknown =
+      typeof envelope.data === `object` && envelope.data !== null
+        ? envelope.data
+        : payload;
+
+    if (body === null || typeof body !== `object`) return;
+    if (!(`id` in body) || typeof body.id !== `number`) return;
+
+    const response = body as { id: number; result: DecodedSymbol | null };
+    const resolve = pending.get(response.id);
+    if (resolve === undefined) return;
+
+    pending.delete(response.id);
+    inFlight = false;
+    resolve(response);
+  };
+
+  if (typeof worker.addEventListener === `function`) {
+    worker.addEventListener(`message`, receive);
+  } else if (typeof worker.on === `function`) {
+    worker.on(`message`, receive);
+  }
+
+  return {
+    get busy(): boolean {
+      return inFlight;
+    },
+
+    scan: async (image: GrayImage): Promise<DecodedSymbol | null> => {
+      // Dropped rather than queued: a camera outruns the decoder, and a queue
+      // would grow unbounded while returning ever staler results.
+      if (inFlight) return null;
+
+      inFlight = true;
+      const id = nextId++;
+
+      const settled = new Promise<{ result: DecodedSymbol | null }>(
+        (resolve) => {
+          pending.set(id, resolve);
+        }
+      );
+
+      // Copied before transfer: transferring detaches the caller's buffer,
+      // and a caller reusing one frame buffer across frames — which is the
+      // normal pattern — would find it empty on the next read.
+      const copy = new Uint8ClampedArray(image.data);
+      worker.postMessage(
+        { id, data: copy, width: image.width, height: image.height },
+        [copy.buffer]
+      );
+
+      const { result } = await settled;
+
+      budget =
+        result === null
+          ? Math.min(maxBudgetMs, budget * growth)
+          : initialBudgetMs;
+
+      return result;
+    },
+
+    reset: (): void => {
+      budget = initialBudgetMs;
+    },
+
+    close: (): void => {
+      pending.clear();
+      inFlight = false;
+      worker.terminate?.();
+    }
+  };
+};
