@@ -413,6 +413,32 @@ with the timing-derived size — the one combination the ladder never tries,
 since timing sizing is only attempted with the outline fit — converts
 **zero** images across every category.
 
+## Soft-decision decoding, measured and rejected
+
+The 87 failures that reach a >=90% grid look like the classic soft-decision
+case: geometry solved, a handful of modules misread. The literature's answer
+is **Chase decoding** — flip the least-reliable positions combinatorially and
+re-run the ordinary decoder — and it is a genuinely different mechanism from
+the erasures already tried. Erasures declare a position unknown and spend one
+check symbol on it, so they are capacity-bound; Chase spends no capacity at
+all and instead makes 2^eta attempts. US 9729171 describes exactly this for
+barcodes: flip the low-confidence bits, decode again.
+
+Implemented against the grey distance from the local threshold as the
+reliability measure, it gains **3 images at eta = 10** (1024 test patterns per
+grid) and **2 at eta = 6**. Sixteen times the work for one more image.
+
+That is the diminishing return the complexity literature predicts —
+"exponential in eta ... in practice relatively small values are used, and as a
+result performance degrades" — and the structural reason is visible in the
+numbers here: >=90% timing accuracy on a version 3 symbol still permits dozens
+of wrong data modules, so no ten-bit flip pattern reaches a valid codeword.
+Chase assumes a handful of errors; these images have many.
+
+Rejected on cost: 3 images at 1024 decodes each, against the threshold
+sweep's 12 at 8 passes each. The technique is correct and the measurement is
+the argument against it, not the technique.
+
 ## Performance envelope
 
 | case                       | cost                                              |
