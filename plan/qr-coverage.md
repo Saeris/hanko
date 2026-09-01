@@ -81,6 +81,36 @@ changes often.
 1. **`high_version` (2.9%)** — versions 25 and 40 photographed flat-on and
    well-lit. Not a difficulty category: the images are easy, the symbols are
    enormous (177x177 modules, 3706 codewords, 49 error-correction blocks).
+
+   Geometry is now ruled out from four independent directions, none of which
+   moved the number:
+
+   - **Correct size.** `estimateSize` is badly wrong here — 109 where the
+     truth is 117, `null` on 6 of 33 — because `distance / moduleSize`
+     multiplies any error in `moduleSize` by ~170 at version 40. Counting
+     transitions along the timing pattern instead is immune to that and
+     recovers the true size (177 on six images, an exact 117 on another).
+     Supplying it decodes **1 of 33**, the one image that already read.
+   - **Alignment patterns.** With the correct size, `locateAlignmentGrid`
+     finds **25 of 25** anchors on `image001` and 39-42 of 49 on the version
+     40 images. Piecewise sampling across all of them still decodes none.
+   - **Sub-pixel anchor refinement.** Centroiding the anchors rather than
+     taking the first matching pixel made timing accuracy *worse* on three of
+     four images tested.
+   - **Global registration search.** Sweeping the fourth corner over a
+     +/-6px grid peaks at 54-62% timing accuracy, always at the edge of the
+     range, never near the ~95% a correct grid shows.
+
+   The sampled matrix on `image001` tells the story: finders read 92/100/73%,
+   but the timing pattern reads **56.4%** and the dark module — which the spec
+   fixes at 1 — reads 0. Corners pinned, interior sliding. The bits being fed
+   to Reed-Solomon are not the symbol's bits across most of its area, which is
+   consistent with the earlier finding that a grid with 100% timing accuracy
+   still repairs 0 of 49 blocks.
+
+   Timing-derived sizing was measured as a general fallback and deliberately
+   NOT added: `estimateSize` returns null on only 29 of 557 images corpus-wide
+   (5.2%), concentrated in exactly the categories that fail downstream anyway.
    The surface sags non-linearly between the finders — timing accuracy runs
    100% at both ends and 0% in the middle — but correcting that is
    demonstrably not sufficient: a grid with 100% timing accuracy still
