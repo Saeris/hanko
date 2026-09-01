@@ -95,6 +95,7 @@
   },
   "scripts": {
     "bench": "node bench/decode.mjs",
+    "bench:corpus": "node bench/corpus.mjs",
     "build": "vp pack",
     "check": "vp check",
     "ci": "vp pack && vp check && vp test",
