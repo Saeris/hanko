@@ -94,6 +94,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "scripts": {
+    "bench": "node bench/decode.mjs",
     "build": "vp pack",
     "check": "vp check",
     "ci": "vp pack && vp check && vp test",

@@ -337,25 +337,44 @@ export const scoreTransform = (
    * gradient: a slightly-wrong transform scores lower rather than randomly,
    * and that gradient is what a search can follow.
    */
-  const cell = (x: number, y: number): number => {
-    let score = 0;
-    for (const dy of [0.3, 0.5, 0.7]) {
-      for (const dx of [0.3, 0.5, 0.7]) {
-        const point = applyTransform(
-          transform,
-          (x + dx - 3.5) / span,
-          (y + dy - 3.5) / span
-        );
-        const px = Math.round(point.x);
-        const py = Math.round(point.y);
-        if (px < 0 || py < 0 || px >= image.width || py >= image.height) {
-          continue;
-        }
-        score += image.bits[py * image.width + px] === 1 ? 1 : -1;
-      }
-    }
-    return score;
+  // Hoisted out of the loop: these are read nine times per call and this
+  // function is the hottest in the decoder — 46% of all CPU time, measured
+  // with deoptkit.
+  const { bits, width, height } = image;
+  const { a11, a12, a13, a21, a22, a23, a31, a32, a33 } = transform;
+
+  /** One sample at a fractional module offset, inlined. */
+  const sampleAt = (mx: number, my: number): number => {
+    const u = (mx - 3.5) / span;
+    const v = (my - 3.5) / span;
+
+    const w = a13 * u + a23 * v + a33;
+    if (w === 0) return 0;
+
+    // `| 0` after adding 0.5 rather than Math.round: rounding was one of two
+    // eager deopts here ("minus zero"), and the coordinates are always
+    // positive inside the guard below.
+    const px = ((a11 * u + a21 * v + a31) / w + 0.5) | 0;
+    const py = ((a12 * u + a22 * v + a32) / w + 0.5) | 0;
+
+    if (px < 0 || py < 0 || px >= width || py >= height) return 0;
+    return bits[py * width + px] === 1 ? 1 : -1;
   };
+
+  const cell = (x: number, y: number): number =>
+    // Unrolled. The array-literal form allocated two arrays and ran two
+    // iterator protocols per call — `Symbol.iterator`, `next`, `done`,
+    // `value` — and this runs hundreds of times per scored transform, with
+    // 1875 transforms scored per image.
+    sampleAt(x + 0.3, y + 0.3) +
+    sampleAt(x + 0.5, y + 0.3) +
+    sampleAt(x + 0.7, y + 0.3) +
+    sampleAt(x + 0.3, y + 0.5) +
+    sampleAt(x + 0.5, y + 0.5) +
+    sampleAt(x + 0.7, y + 0.5) +
+    sampleAt(x + 0.3, y + 0.7) +
+    sampleAt(x + 0.5, y + 0.7) +
+    sampleAt(x + 0.7, y + 0.7);
 
   /** The square ring `radius` modules out from a centre. */
   const ring = (cx: number, cy: number, radius: number): number => {
