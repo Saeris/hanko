@@ -820,34 +820,59 @@ export const refineTransform = (
     `a32`
   ] as const;
 
-  let current: Record<string, number> = { ...transform };
+  // Coefficients in a typed array rather than an object mutated by string
+  // key. The object form made every read and write a dictionary-mode named
+  // access on the decoder's hottest path — `scoreTransform` accounts for 40%
+  // of CPU on a noisy frame — and V8 reported "insufficient type feedback for
+  // generic named access" against it. Indexed access on a Float64Array is
+  // monomorphic and allocates nothing.
+  const values = new Float64Array(8);
+  for (let i = 0; i < 8; i++) values[i] = transform[keys[i]];
+
+  const asTransform = (): Transform => ({
+    a11: values[0],
+    a12: values[1],
+    a13: values[2],
+    a21: values[3],
+    a22: values[4],
+    a23: values[5],
+    a31: values[6],
+    a32: values[7],
+    a33: transform.a33
+  });
+
   let best = scoreTransform(image, transform, size, alignmentCenters);
 
   // Two percent of each parameter's own magnitude, so the step suits both the
   // large translation terms and the small projective ones.
-  const steps = keys.map((key) => Math.abs(current[key]) * 0.02);
+  const steps = new Float64Array(8);
+  for (let i = 0; i < 8; i++) steps[i] = Math.abs(values[i]) * 0.02;
 
   for (let pass = 0; pass < 5; pass++) {
-    for (const [index, key] of keys.entries()) {
+    for (let index = 0; index < 8; index++) {
       for (const direction of [1, -1]) {
-        const previous = current[key];
-        current[key] = previous + steps[index] * direction;
+        const previous = values[index];
+        values[index] = previous + steps[index] * direction;
 
-        const candidate = current as unknown as Transform;
-        const score = scoreTransform(image, candidate, size, alignmentCenters);
+        const score = scoreTransform(
+          image,
+          asTransform(),
+          size,
+          alignmentCenters
+        );
 
         if (score > best) {
           best = score;
         } else {
-          current[key] = previous;
+          values[index] = previous;
         }
       }
     }
 
-    for (let i = 0; i < steps.length; i++) steps[i] *= 0.5;
+    for (let i = 0; i < 8; i++) steps[i] *= 0.5;
   }
 
-  return current as unknown as Transform;
+  return asTransform();
 };
 
 /**

@@ -60,4 +60,32 @@ describe(`decoder cost`, () => {
     // quadratic.
     expect(large).toBeLessThan(Math.max(50, small * 8));
   });
+
+  it(`does not collapse on a frame of sensor grain`, () => {
+    // WHY: grain is the worst input a finder scan can get. Random pixels
+    // produce spurious 1:1:3:1:1 runs everywhere — measured, ~190 candidates
+    // on a 1280x720 frame against 0-5 for an ordinary photograph — and every
+    // per-candidate stage then runs at its worst case on a frame holding no
+    // symbol. A camera in low light delivers exactly this, so it is a real
+    // operating condition rather than a synthetic one.
+    //
+    // This frame cost 3.8 seconds before the dedup scan was bounded, the
+    // refine coefficients moved off dictionary-mode property access, and the
+    // deep search learned to skip implausible candidate counts. The budget is
+    // generous against the ~2.6s that measured afterwards, because CI machines
+    // vary — it guards the collapse, not the constant.
+    const width = 1280;
+    const height = 720;
+    const data = new Uint8ClampedArray(width * height);
+    let state = 1;
+    for (let i = 0; i < data.length; i++) {
+      state = (state * 1103515245 + 12345) & 0x7fffffff;
+      data[i] = (state >> 16) & 0xff;
+    }
+
+    const started = Date.now();
+    createQrDecoder({ timeBudgetMs: 0 }).decode({ data, width, height });
+
+    expect(Date.now() - started).toBeLessThan(3200);
+  });
 });

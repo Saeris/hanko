@@ -117,6 +117,15 @@ export interface QrDecoderOptions {
 const UPSCALE_LIMIT = 2_000_000;
 
 /**
+ * Candidate count past which a frame is treated as grain for the deep search.
+ *
+ * Sixty: no corpus image below that count needs the deep search to decode,
+ * and every image above it that decodes does so on a cheaper rung. See the
+ * gate in `decodeBinarized`.
+ */
+const NOISE_CANDIDATES = 60;
+
+/**
  * Fixed thresholds to try when every adaptive choice has failed.
  *
  * Spread across the range rather than concentrated, because the thresholds
@@ -379,7 +388,21 @@ const decodeBinarized = (
   // unconditionally it starves the cheaper retry rungs above it of their time
   // budget, which measured as `close` collapsing from 9 of 14 to 0 — the
   // search itself is valuable, but not at the price of everything after it.
-  if (decoded === null && deepSearch) {
+  // Skipped when the frame produced implausibly many candidates.
+  //
+  // Sensor grain generates spurious 1:1:3:1:1 runs everywhere: a noisy
+  // 1280x720 frame yields 181-193 finder candidates against 0-5 for an
+  // ordinary photograph, and the ladder then grades transforms against noise
+  // that can never decode — `scoreTransform` alone takes 40% of CPU on such a
+  // frame, and the frame costs seconds.
+  //
+  // Rejecting the frame outright is not safe: 10 real corpus images exceed 100
+  // candidates, `monitor/image003` reaches 333, and the whole `lots` category
+  // (several codes in one frame, read 100%) sits at 182-188 by design. But
+  // every one of those decodes on the cheap path — 7 of 7 in `lots`, 4 of 4 in
+  // `monitor` — because they hold real symbols. Only the expensive search is
+  // wasted on grain, so only the expensive search is skipped.
+  if (decoded === null && deepSearch && patterns.length <= NOISE_CANDIDATES) {
     // Searched at each plausible size, not just the estimated one. Measured
     // on the `perspective` category, supplying a known-good corner takes it
     // from 4 of 23 images to 8, and a corner WITH a size sweep to 10 — so the

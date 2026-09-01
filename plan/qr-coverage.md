@@ -447,6 +447,15 @@ the argument against it, not the technique.
 | Symbol that decodes        | 11-32ms at 1024x768                               |
 | Symbol that cannot be read | 193-224ms, bounded by `timeBudgetMs`              |
 
+A frame of sensor grain is the worst case and was the worst defect: ~190
+spurious finder candidates against 0-5 for an ordinary photograph, which cost
+**3.8 seconds** unlimited. Three fixes took it to **2.6s** without changing
+coverage — bounding the candidate dedup scan, which was accidentally quadratic
+in candidate count; moving the refine coefficients off dictionary-mode
+property access into a typed array; and skipping the deep search when the
+candidate count is implausible. A camera in low light produces this frame, so
+it is guarded by a test.
+
 `timeBudgetMs` defaults to 120ms. It is a blunt instrument: the full corpus
 reads **62.7% unlimited against 40.3% at 120ms**, and the curve is still
 climbing at 700ms. Set `0` for stills. For a live camera the answer is
