@@ -126,4 +126,95 @@ describe(`reed-Solomon`, () => {
     // Either it threw, or it returned something that is not the original.
     if (result !== null) expect(result).not.toEqual(data);
   });
+
+  describe(`erasures`, () => {
+    /**
+     * An erasure is damage whose POSITION is known but whose value is not.
+     * Telling the decoder where to look is worth real capacity — the bound is
+     * `2 * errors + erasures <= check codewords` — because finding a damaged
+     * codeword costs a check symbol and repairing a known one costs none.
+     *
+     * That matters for a camera. Glare blows a region to white and shadow
+     * crushes one to black; both are visibly untrustworthy, and thresholding
+     * them into confident bits throws away exactly the information that would
+     * have doubled what the block survives.
+     */
+    it(`corrects twice as many known positions as unknown ones`, () => {
+      // WHY: this is the entire reason to accept erasure positions. Ten check
+      // codewords repair five errors or ten erasures, so the boundary is
+      // tested from BOTH sides — a decoder that quietly fell back to
+      // errors-only would still pass a test that only checked five.
+      const data = dataOf(16, 3);
+      const block = encode(data, 10);
+
+      const damage = (
+        count: number
+      ): {
+        block: number[];
+        positions: number[];
+      } => {
+        const damaged = [...block];
+        const positions: number[] = [];
+        for (let i = 0; i < count; i++) {
+          positions.push(i * 2);
+          damaged[i * 2] = damaged[i * 2] ^ 0x5a;
+        }
+        return { block: damaged, positions };
+      };
+
+      const five = damage(5);
+      expect(decode(five.block, 10)).toEqual(data);
+
+      const ten = damage(10);
+      expect(() => decode(ten.block, 10)).toThrow();
+      expect(decode(ten.block, 10, ten.positions)).toEqual(data);
+    });
+
+    it(`spends capacity on errors and erasures together`, () => {
+      // WHY: the two kinds mix, and the bound is what decides how many of
+      // each. A glare blob gives known positions while the rest of the symbol
+      // may still hold unknown errors, so the realistic case is both at once —
+      // and an implementation that handled only pure erasures would look
+      // correct until it met a real photograph.
+      const data = dataOf(16, 5);
+      const block = encode(data, 10);
+
+      const withBoth = (
+        erasureCount: number
+      ): {
+        block: number[];
+        positions: number[];
+      } => {
+        const damaged = [...block];
+        const positions: number[] = [];
+        for (let i = 0; i < erasureCount; i++) {
+          positions.push(i);
+          damaged[i] = damaged[i] ^ 0x33;
+        }
+        // Two more the decoder is NOT told about.
+        damaged[20] = damaged[20] ^ 0x77;
+        damaged[22] = damaged[22] ^ 0x11;
+        return { block: damaged, positions };
+      };
+
+      // 2 * 2 + 6 = 10, exactly the budget.
+      const inside = withBoth(6);
+      expect(decode(inside.block, 10, inside.positions)).toEqual(data);
+
+      // 2 * 2 + 7 = 11, one past it.
+      const outside = withBoth(7);
+      expect(() => decode(outside.block, 10, outside.positions)).toThrow();
+    });
+
+    it(`ignores erasure positions on an undamaged block`, () => {
+      // WHY: the imaging layer guesses which modules are untrustworthy, and it
+      // will sometimes flag a region that read correctly anyway. Suspicion
+      // must not corrupt a block whose syndromes are already zero, or every
+      // glare false-positive would break a scan that was working.
+      const data = dataOf(16, 9);
+      const block = encode(data, 10);
+
+      expect(decode(block, 10, [0, 1, 2, 3])).toEqual(data);
+    });
+  });
 });

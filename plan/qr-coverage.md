@@ -113,7 +113,7 @@ changes often.
 
    - **Accuracy does not decay with distance from an anchor.** Bucketing
      timing-module accuracy by distance to the nearest alignment coordinate
-     gives a flat, bad profile: `image001` reads 67% *on* an anchor and 63%
+     gives a flat, bad profile: `image001` reads 67% _on_ an anchor and 63%
      eight modules away, and `image009` reads **0% directly on one**. So
      interpolation between anchors is not the fault — modules sitting on top
      of a located alignment pattern read no better than distant ones. The
@@ -150,7 +150,7 @@ changes often.
    The literature first ruled out the obvious remaining suspects. The Nyquist
    study (Sensors 22(19):7230) puts the practical floor at **3-3.5 pixels per
    module**; these images measure **6.4-10.7**, so they are not
-   resolution-limited. BoofCV's `QrCodeBinaryGridReader` reads the *greyscale*
+   resolution-limited. BoofCV's `QrCodeBinaryGridReader` reads the _greyscale_
    image with a 5-point majority vote per module and a threshold bilinearly
    interpolated between four values measured at the symbol's own corners —
    implemented and tested here, it moved timing accuracy by +/-2 points and
@@ -159,7 +159,7 @@ changes often.
    What the sampled grid actually needed was a uniform sub-module **phase**
    shift. Scanning scale and phase independently finds the optimum at scale
    exactly **1.000** on both axes — no pitch error — with a shift of about
-   (+0.2, -0.2) modules bringing finders to 96-98% *and* timing to 76-83%
+   (+0.2, -0.2) modules bringing finders to 96-98% _and_ timing to 76-83%
    together, the first self-consistent state reached. It still does not
    decode.
 
@@ -188,8 +188,8 @@ changes often.
    ### Who actually uses these
 
    Worth knowing before spending more on the category. Industry guidance is
-   consistent: *"most QR codes you encounter in the wild use versions between
-   **1 and 10**"*, and the named uses for large versions are vCards, Wi-Fi
+   consistent: _"most QR codes you encounter in the wild use versions between
+   **1 and 10**"_, and the named uses for large versions are vCards, Wi-Fi
    credentials and bulk product data — static, controlled-print, close-scan
    situations that happen to supply the <=1% module accuracy the error budget
    demands. High-volume logistics does **not** use them: USPS, UPS and FedEx
@@ -204,7 +204,7 @@ changes often.
    So `high_version` is 33 images of a 718-image corpus, in a regime that
    needs 4-17x better sampling than anything measured here, for a use case the
    library will never generate and most adopters will never scan. It also explains why five separate sources of
-   correct information each changed nothing: every one removes *some* error,
+   correct information each changed nothing: every one removes _some_ error,
    but the requirement is <=1%, and a version 40 symbol allows at most 313 of
    its 31,329 modules to be wrong. A version 1 symbol allows ~4 of 441, which
    is why small symbols are forgiving and these are not.

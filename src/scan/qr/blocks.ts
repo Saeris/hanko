@@ -356,6 +356,46 @@ export const deinterleave = (
   return blocks;
 };
 
+/**
+ * Where each interleaved codeword ends up, as `[block, position]`.
+ *
+ * The inverse of what {@link deinterleave} does to the values, for callers
+ * that need to follow a codeword rather than read it — which erasure decoding
+ * does: damage is contiguous in the IMAGE, and interleaving is precisely what
+ * scatters it across blocks so no single block absorbs all of it. Turning an
+ * image region into per-block erasure positions means replaying that
+ * scattering.
+ *
+ * `position` indexes a block's data codewords, then continues into its error
+ * codewords, matching the layout `decode` expects.
+ */
+export const interleaveMap = (
+  structure: BlockStructure
+): Array<readonly [number, number]> => {
+  const sizes = blockSizes(structure);
+  const map: Array<readonly [number, number]> = [];
+
+  const longest = Math.max(...sizes);
+  for (let position = 0; position < longest; position++) {
+    for (const [block, size] of sizes.entries()) {
+      if (position >= size) continue;
+      map.push([block, position]);
+    }
+  }
+
+  for (
+    let position = 0;
+    position < structure.errorCodewordsPerBlock;
+    position++
+  ) {
+    for (const [block, size] of sizes.entries()) {
+      map.push([block, size + position]);
+    }
+  }
+
+  return map;
+};
+
 /** Pack a bit array into bytes, most significant bit first. */
 export const bitsToCodewords = (bits: Uint8Array): number[] => {
   const codewords: number[] = [];

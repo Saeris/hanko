@@ -67,14 +67,22 @@ const syndromes = (
 const euclidean = (
   a: Polynomial,
   b: Polynomial,
-  limit: number
+  limit: number,
+  /**
+   * Degree at which to stop, when erasures raise it above the usual half.
+   *
+   * With `e` erasures the algorithm may run until the remainder degree falls
+   * below `(limit + e) / 2` rather than `limit / 2` — and that extra room is
+   * precisely where the additional correction capacity comes from.
+   */
+  stopDegree = Math.floor(limit / 2)
 ): { locator: Polynomial; evaluator: Polynomial } => {
   let rLast = a;
   let r = b;
   let tLast = Polynomial.zero();
   let t = new Polynomial([1]);
 
-  while (r.degree >= Math.floor(limit / 2)) {
+  while (r.degree >= stopDegree) {
     const rLastLast = rLast;
     const tLastLast = tLast;
     rLast = r;
@@ -172,6 +180,20 @@ const errorMagnitudes = (
     );
   });
 
+/**
+ * Keep only the lowest `count` degrees of a polynomial.
+ *
+ * Coefficients are stored highest-degree first, so the low-order terms are the
+ * TAIL of the array. Both the Forney syndrome and the errata evaluator are
+ * defined modulo `x^count`, and taking the wrong end here yields a polynomial
+ * that is the right length and entirely wrong.
+ */
+const truncate = (poly: Polynomial, count: number): Polynomial => {
+  const { coefficients } = poly;
+  if (coefficients.length <= count) return poly;
+  return new Polynomial(coefficients.slice(coefficients.length - count));
+};
+
 /** Discrete logarithm by search. Only reached on the error path. */
 const logOf = (value: number): number => {
   for (let i = 0; i < 255; i++) if (exp(i) === value) return i;
@@ -187,7 +209,22 @@ const logOf = (value: number): number => {
  */
 export const decode = (
   received: readonly number[],
-  errorCodewordCount: number
+  errorCodewordCount: number,
+  /**
+   * Indices of codewords already known to be unreadable.
+   *
+   * An **erasure** — damage whose position is known but whose value is not.
+   * The distinction is worth real capacity: the bound is
+   * `2 * errors + erasures <= errorCodewordCount`, so a codeword costs two
+   * check symbols when the decoder has to find it and only one when it is
+   * told where to look. With 10 check codewords that is 5 unknown errors
+   * against 10 known erasures.
+   *
+   * The imaging layer can often tell: a region blown out by glare or crushed
+   * to black by shadow is visibly untrustworthy, and thresholding it into a
+   * confident bit throws that knowledge away. Indices are into `received`.
+   */
+  erasures: readonly number[] = []
 ): number[] => {
   const dataLength = received.length - errorCodewordCount;
   if (dataLength <= 0) {
@@ -198,16 +235,59 @@ export const decode = (
   const { values, hasError } = syndromes(poly, errorCodewordCount);
 
   // Intact block — overwhelmingly the common case, and worth not paying for.
+  // Erasures do not change this: if every syndrome is zero the block is
+  // already correct, whatever the imaging layer suspected.
   if (!hasError) return received.slice(0, dataLength);
+
+  // Erasure positions as field elements. A codeword's index is counted from
+  // the END of the block, matching the correction step below.
+  const erasureRoots = [
+    ...new Set(erasures.filter((i) => i >= 0 && i < received.length))
+  ].map((index) => exp(received.length - 1 - index));
+
+  if (erasureRoots.length > errorCodewordCount) {
+    throw new ReedSolomonError(
+      `${erasureRoots.length} erasures exceed ${errorCodewordCount} check codewords`
+    );
+  }
+
+  // The erasure locator, whose roots are the known positions:
+  // Lambda(x) = product of (1 - root * x).
+  let erasureLocator = new Polynomial([1]);
+  for (const root of erasureRoots) {
+    erasureLocator = erasureLocator.multiply(new Polynomial([root, 1]));
+  }
+
+  // The Forney syndrome: the syndrome polynomial with the known erasures
+  // folded in, truncated back to the check-codeword count. Feeding this to
+  // the Euclidean algorithm in place of the raw syndrome is what lets one
+  // pass solve for erasures and errors together.
+  const syndromePoly = new Polynomial(values);
+  const forney =
+    erasureRoots.length === 0
+      ? syndromePoly
+      : truncate(syndromePoly.multiply(erasureLocator), errorCodewordCount);
 
   const { locator, evaluator } = euclidean(
     Polynomial.monomial(errorCodewordCount, 1),
-    new Polynomial(values),
-    errorCodewordCount
+    forney,
+    errorCodewordCount,
+    // Erasures buy exactly this: each one raises the degree the remainder may
+    // stop at, and so the number of unknown errors solvable alongside them.
+    Math.floor((errorCodewordCount + erasureRoots.length) / 2)
   );
 
-  const positions = errorPositions(locator);
-  const magnitudes = errorMagnitudes(evaluator, positions);
+  // The errata locator covers both kinds of damage at once.
+  const errata =
+    erasureRoots.length === 0 ? locator : locator.multiply(erasureLocator);
+
+  const positions = errorPositions(errata);
+  const magnitudes = errorMagnitudes(
+    erasureRoots.length === 0
+      ? evaluator
+      : truncate(new Polynomial(values).multiply(errata), errorCodewordCount),
+    positions
+  );
 
   const corrected = [...received];
   for (const [i, position] of positions.entries()) {

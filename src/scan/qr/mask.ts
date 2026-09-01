@@ -222,3 +222,41 @@ export const readDataBits = (
 
   return Uint8Array.from(bits);
 };
+
+/**
+ * The module each data bit was read from, in the same order.
+ *
+ * The traversal that produces the bitstream is the only thing that knows how
+ * image positions map onto codewords, and erasure decoding needs exactly that
+ * map: a region the imaging layer distrusts is a set of MODULES, while
+ * Reed-Solomon wants a set of codeword indices.
+ *
+ * Kept separate from {@link readDataBits} rather than returned alongside it,
+ * because the ordinary decode path never needs it and building an array of
+ * coordinate pairs per frame would cost every scan for the benefit of the few
+ * that are damaged.
+ */
+export const dataBitOrigins = (
+  size: number,
+  version: number
+): Array<readonly [number, number]> => {
+  const functionMap = functionModuleMap(size, version);
+  const origins: Array<readonly [number, number]> = [];
+
+  let upward = true;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    const columnRight = right <= 6 ? right - 1 : right;
+
+    for (let step = 0; step < size; step++) {
+      const y = upward ? size - 1 - step : step;
+
+      for (const x of [columnRight, columnRight - 1]) {
+        if (functionMap[y * size + x] === 1) continue;
+        origins.push([x, y]);
+      }
+    }
+    upward = !upward;
+  }
+
+  return origins;
+};
