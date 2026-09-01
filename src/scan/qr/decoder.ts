@@ -279,23 +279,33 @@ const decodeBinarized = (
   // budget, which measured as `close` collapsing from 9 of 14 to 0 — the
   // search itself is valuable, but not at the price of everything after it.
   if (decoded === null && deepSearch) {
-    for (const candidate of searchCorner(
-      matrix,
-      finders,
-      size,
-      moduleSize,
-      alignmentCentersFor(version),
-      estimated
-    )) {
-      const candidateGrid = sampleGrid(matrix, candidate, size);
-      if (candidateGrid === null) continue;
+    // Searched at each plausible size, not just the estimated one. Measured
+    // on the `perspective` category, supplying a known-good corner takes it
+    // from 4 of 23 images to 8, and a corner WITH a size sweep to 10 — so the
+    // two errors interact here exactly as they do under rotation, and
+    // correcting either alone leaves images on the table.
+    for (const candidateSize of sizes) {
+      if (decoded !== null) break;
 
-      const candidateDecode = decodeMatrix(candidateGrid);
-      if (candidateDecode !== null) {
-        transform = candidate;
-        sampled = candidateGrid;
-        decoded = candidateDecode;
-        break;
+      for (const candidate of searchCorner(
+        matrix,
+        finders,
+        candidateSize,
+        moduleSize,
+        alignmentCentersFor((candidateSize - 17) / 4),
+        estimated
+      )) {
+        const candidateGrid = sampleGrid(matrix, candidate, candidateSize);
+        if (candidateGrid === null) continue;
+
+        const candidateDecode = decodeMatrix(candidateGrid);
+        if (candidateDecode !== null) {
+          transform = candidate;
+          sampled = candidateGrid;
+          decoded = candidateDecode;
+          size = candidateSize;
+          break;
+        }
       }
     }
   }
