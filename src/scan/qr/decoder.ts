@@ -45,6 +45,7 @@ import {
   estimateBottomRight,
   estimateSize,
   rectifySymbol,
+  unreadableModules,
   refineTransform,
   samplePiecewise,
   searchCorner,
@@ -331,6 +332,25 @@ const decodeBinarized = (
           break;
         }
       }
+    }
+  }
+
+  // Retry telling Reed-Solomon where the damage is.
+  //
+  // Placed as a retry rather than folded into the sampling above, because
+  // building the mask costs a pass over every module and the overwhelming
+  // majority of frames decode without it — this way a healthy symbol pays
+  // nothing and only a damaged one pays at all.
+  //
+  // The capacity is real: `2 * errors + erasures <= check codewords`, so a
+  // codeword the decoder is TOLD about costs one check symbol instead of two.
+  // Measured against a synthetic blob on a version 3 symbol at ecM, 15% of the
+  // area decodes 0% of the time as errors and 100% as erasures.
+  if (decoded === null && sampled !== null) {
+    const unreliable = unreadableModules(image, transform, size);
+    // Only worth a second decode when something actually looks unreadable.
+    if (unreliable.some((flag) => flag === 1)) {
+      decoded = decodeMatrix(sampled, unreliable);
     }
   }
 

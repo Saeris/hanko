@@ -296,6 +296,46 @@ actually takes:
 Doubling the correctable count should move the ecM threshold from ~10% toward
 ~20% of the symbol.
 
+### Built, verified, and not yet the binding constraint
+
+Erasure decoding is implemented and correct. It satisfies the theoretical
+bound at every boundary — 10 check codewords repair 5 errors and fail at 6,
+repair 10 erasures and fail at 11, repair 2 errors plus 6 erasures but not 2
+plus 7 — and end-to-end through the imaging path a synthetic blob shows
+exactly the predicted gain:
+
+| EC level | blob area | errors-only | with erasures |
+| -------- | --------- | ----------- | ------------- |
+| M        | 15%       | 0%          | **100%**      |
+| Q        | 20%       | 0%          | **100%**      |
+| H        | 25%       | 0%          | **100%**      |
+
+It converts **zero** corpus images, and the reason is worth recording.
+
+The headroom looked real: 45 of 56 `glare` images reach a finder triple under
+some binarization while only 28 decode, and the same gap holds for
+`bright_spots` (28 vs 21) and `damaged` (31 vs 17) — 38 images across three
+categories that locate a symbol and then lose it. The saturation detector
+fires on them, marking a median 5.4% of modules on `glare` and **21.6%** on
+`bright_spots`, well past the 15% where synthetic blobs flip from 0% to 100%.
+
+But sweeping every ladder binarization and size, with erasures offered at each,
+recovers none of them. The measurement that explains it: on failing images that
+produce a grid at all, **median timing accuracy is 50-58%** — chance. Localized
+damage leaves the timing pattern near 95% intact and destroys one region;
+these grids are wrong *everywhere*.
+
+So the failures in `glare`, `bright_spots` and `damaged` are not blobs of
+destroyed modules over an otherwise-good grid. They are the same
+grid-registration failure that limits `perspective` and `high_version`, and
+erasures cannot help: there is no clean region left to preserve, and marking
+most of a symbol as erased spends the capacity it was meant to save.
+
+The capability stays because it is correct, tested, costs nothing when no mask
+is supplied, and is exactly what these categories will need **once** the grid
+lands — but detection and registration, not correction capacity, are what
+gate them today.
+
 ## Performance envelope
 
 | case                       | cost                                              |
