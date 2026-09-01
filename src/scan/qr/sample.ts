@@ -774,11 +774,24 @@ export const sampleGrid = (
       const sx = Math.round(source.x);
       const sy = Math.round(source.y);
 
-      // A symbol partly outside the frame cannot be decoded, and sampling
-      // clamped edge pixels would produce a plausible-looking matrix of
-      // nonsense rather than an honest failure.
-      if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) {
-        return null;
+      // Out of frame reads as LIGHT rather than abandoning the grid.
+      //
+      // Rejecting the whole symbol on one stray sample is too blunt: under
+      // perspective the corner estimate is imprecise, so a grid that is 95%
+      // correct gets discarded because a quiet-zone module maps a pixel or
+      // two past the edge. Reed-Solomon exists to absorb a handful of wrong
+      // modules, and pre-empting it throws away symbols it would have
+      // recovered. The perspective literature makes the same point from the
+      // other direction, padding detected corners "to account for minor
+      // inaccuracies in corner detection".
+      //
+      // Light is the right default because everything outside a symbol is its
+      // quiet zone, which the standard requires to be light.
+      const outside =
+        sx < 0 || sy < 0 || sx >= image.width || sy >= image.height;
+      if (outside) {
+        bits[y * size + x] = 0;
+        continue;
       }
 
       bits[y * size + x] = image.bits[sy * image.width + sx]!;
