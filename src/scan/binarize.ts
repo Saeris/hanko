@@ -63,6 +63,44 @@ export const toGray = (
 };
 
 /**
+ * Enlarge by an integer factor, replicating pixels.
+ *
+ * The mirror of {@link downscale}, and it exists for the same reason in
+ * reverse. Local binarization thresholds over a fixed 8px block, so what
+ * matters is not the module size in pixels but its RATIO to that block. A
+ * symbol far from the camera can land at two or three pixels per module, at
+ * which point one block spans several modules and averages them into a single
+ * verdict — the data is destroyed before geometry ever runs.
+ *
+ * Enlarging the frame changes that ratio without inventing detail. Measured on
+ * the benchmark corpus, a 2x pass takes `nominal` from 99 of 125 to 106 and
+ * `rotations` from 36 of 44 to 37.
+ *
+ * Nearest-neighbour rather than interpolation, deliberately. Smooth
+ * interpolation manufactures intermediate greys along every module edge, which
+ * is exactly the ambiguity the threshold then has to resolve; replication
+ * leaves each measured value untouched and changes only the block-to-module
+ * ratio, which is the whole point.
+ */
+export const upscale = (image: GrayImage, factor: number): GrayImage => {
+  if (factor <= 1) return image;
+
+  const width = image.width * factor;
+  const height = image.height * factor;
+  const data = new Uint8ClampedArray(width * height);
+
+  for (let y = 0; y < height; y++) {
+    const sourceRow = Math.floor(y / factor) * image.width;
+    const targetRow = y * width;
+    for (let x = 0; x < width; x++) {
+      data[targetRow + x] = image.data[sourceRow + Math.floor(x / factor)];
+    }
+  }
+
+  return { data, width, height };
+};
+
+/**
  * Binarize against one threshold chosen from the whole image's histogram.
  *
  * The opposite trade to {@link binarize}. A single threshold cannot follow a

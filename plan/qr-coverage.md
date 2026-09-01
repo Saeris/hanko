@@ -41,7 +41,7 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 
 | condition             | works                                          | limit                                             |
 | --------------------- | ---------------------------------------------- | ------------------------------------------------- |
-| Module size           | 2px and up                                     | 1px/module fails                                  |
+| Module size           | 2px and up                                     | below ~4px relies on the upscale rung; 1px fails  |
 | Quiet zone            | 0 modules and up                               | no minimum needed — better than the spec requires |
 | Polarity              | both                                           | dark-on-light and light-on-dark                   |
 | Rotation              | 0-35 deg, 60-90 deg, and every 90 deg multiple | **45 deg still fails**                            |
@@ -51,27 +51,30 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 ## Real-photograph coverage
 
 The 718-image BoofCV benchmark, which is photographs rather than renders.
-Overall **51.5%**, against jsQR's 24.8% and ZXing's published 31.87% on the
-same images.
+Overall **62.7%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
+ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 
 | condition                               | rate     | what is known                   |
 | --------------------------------------- | -------- | ------------------------------- |
-| Even lighting (`brightness`)            | 89.3%    |                                 |
-| Multiple codes per frame (`lots`)       | 87.5%    |                                 |
-| Hard shadows (`shadows`)                | 73.7%    | local binarization              |
-| Specular highlights (`bright_spots`)    | 66.7%    |                                 |
-| Non-compliant symbols                   | 65.7%    |                                 |
-| Ordinary photographs (`nominal`)        | 65.6%    |                                 |
-| Motion blur (`blurred`)                 | 64.2%    | blur retry                      |
-| Curved surfaces (`curved`)              | 61.2%    | piecewise sampling              |
-| Rotated (`rotations`)                   | 50.0%    |                                 |
-| Screens and monitors (`monitor`)        | 48.0%    | low-pass retry defeats moire    |
-| Pathological / adversarial              | 42.3%    |                                 |
-| Small in a large frame (`close`)        | 38.1%    | multi-scale retry               |
-| Glare                                   | 35.7%    |                                 |
-| Perspective / oblique angles            | 16.3%    | corner search helps, not solved |
-| Physically damaged                      | 27.1%    |                                 |
+| Multiple codes per frame (`lots`)       | 100.0%   |                                 |
+| Hard shadows (`shadows`)                | 84.2%    | local binarization              |
+| Rotated (`rotations`)                   | 81.8%    |                                 |
+| Ordinary photographs (`nominal`)        | 80.8%    | 250-image category, the largest |
+| Even lighting (`brightness`)            | 75.0%    |                                 |
+| Motion blur (`blurred`)                 | 73.6%    | blur retry                      |
+| Curved surfaces (`curved`)              | 65.7%    | piecewise sampling              |
+| Non-compliant symbols                   | 64.2%    |                                 |
+| Specular highlights (`bright_spots`)    | 63.6%    |                                 |
+| Small in a large frame (`close`)        | 59.5%    | multi-scale retry, both ways    |
+| Pathological / adversarial              | 57.7%    |                                 |
+| Screens and monitors (`monitor`)        | 56.0%    | low-pass retry defeats moire    |
+| Glare                                   | 50.0%    |                                 |
+| Perspective / oblique angles            | 48.8%    | believed near its ceiling       |
+| Physically damaged                      | 35.4%    |                                 |
 | **Very large symbols (`high_version`)** | **2.9%** | see below                       |
+
+Re-measure rather than cite: every figure here is a snapshot of a ladder that
+changes often.
 
 ## Known gaps, in order of what is worth fixing
 
@@ -84,9 +87,31 @@ same images.
    repairs zero of 49 blocks under all 32 mask/EC combinations. Six
    hypotheses tested and disproved. The geometric search space is exhausted.
 
-2. **`perspective` (16.3%)** — oblique angles. Supplying a known-good fourth
-   corner takes it from 2 of 23 images to 7, so the information is
-   recoverable; the corner search reaches some of that and not all.
+2. **`perspective` (48.8%)** — oblique angles, and now believed to be at or
+   near its classical ceiling. Two independent oracles were supplied and each
+   added **zero** images:
+
+   - **Ground-truth corners.** Feeding ZXing's own corner positions for all
+     22 remaining failures, and sweeping every legal size from 21 to 97,
+     recovers none of them. An earlier note here recorded a 2-of-23 to 7 gain
+     from a supplied corner; that measurement was taken under the default
+     120ms budget, and it does not survive re-measurement at `timeBudgetMs: 0`.
+   - **Exhaustive triple search.** Trying every scoring finder triple rather
+     than only `selectBestTriple`'s pick adds nothing on `perspective`,
+     `rotations`, or `nominal`. The selection is not discarding a readable
+     symbol.
+
+   When two oracles at different stages both move the number by nothing, the
+   fault is downstream of both. Four of the failures (`image010`-`012`,
+   `image026`) sample the timing pattern at **0%** — not 50%, which would be
+   noise — with correct-polarity finders and the true corner, which is only
+   possible if binarization has already destroyed the modules. Those symbols
+   are ~130px across at roughly 2.7px per module, in natively 1024x768 frames
+   where no more resolution exists to recover. Neither higher resolution
+   (capping at 2400px or not at all) nor polarity inversion changes any of it.
+
+   Several of the remaining failures have no ZXing ground truth at all, which
+   is itself evidence about where the ceiling sits.
 
 3. **45-degree rotation** — the only angle that still fails on synthetic
    renders. The module-size correction over-shoots there, giving size 33
@@ -105,8 +130,12 @@ same images.
 | Symbol that decodes        | 11-32ms at 1024x768                               |
 | Symbol that cannot be read | 193-224ms, bounded by `timeBudgetMs`              |
 
-`timeBudgetMs` defaults to 120ms. It is a blunt instrument: recognition on a
-sampled set runs 21 of 72 at 120ms against 44 of 72 unlimited, and the curve
-is still climbing at 700ms. Set `0` for stills. The right shape for a live
-camera is progressive — cheap rungs every frame, expensive ones spread across
-successive frames — which is not yet built.
+`timeBudgetMs` defaults to 120ms. It is a blunt instrument: the full corpus
+reads **62.7% unlimited against 40.3% at 120ms**, and the curve is still
+climbing at 700ms. Set `0` for stills. For a live camera the answer is
+`createProgressiveScanner`, which spends a small budget per frame and advances
+through the ladder across successive frames.
+
+Both figures are worth re-measuring rather than quoting: the ladder changes
+often, and comparing a fresh number against a stale one in this document has
+twice manufactured a regression that did not exist.
