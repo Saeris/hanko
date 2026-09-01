@@ -95,7 +95,7 @@ changes often.
      finds **25 of 25** anchors on `image001` and 39-42 of 49 on the version
      40 images. Piecewise sampling across all of them still decodes none.
    - **Sub-pixel anchor refinement.** Centroiding the anchors rather than
-     taking the first matching pixel made timing accuracy *worse* on three of
+     taking the first matching pixel made timing accuracy _worse_ on three of
      four images tested.
    - **Global registration search.** Sweeping the fourth corner over a
      +/-6px grid peaks at 54-62% timing accuracy, always at the edge of the
@@ -108,9 +108,42 @@ changes often.
    consistent with the earlier finding that a grid with 100% timing accuracy
    still repairs 0 of 49 blocks.
 
-   Timing-derived sizing was measured as a general fallback and deliberately
-   NOT added: `estimateSize` returns null on only 29 of 557 images corpus-wide
-   (5.2%), concentrated in exactly the categories that fail downstream anyway.
+   Two further probes, both aimed at the sampling stage rather than the
+   corners, and both negative:
+
+   - **Accuracy does not decay with distance from an anchor.** Bucketing
+     timing-module accuracy by distance to the nearest alignment coordinate
+     gives a flat, bad profile: `image001` reads 67% *on* an anchor and 63%
+     eight modules away, and `image009` reads **0% directly on one**. So
+     interpolation between anchors is not the fault — modules sitting on top
+     of a located alignment pattern read no better than distant ones. The
+     anchors are regularly spaced (median neighbour-spacing ratio 1.00-1.01,
+     so they are genuine patterns rather than false positives) yet sit a
+     median 1.3-1.7 modules from where the transform predicts. Reassigning
+     every anchor one column over improves all three images identically —
+     56->69%, 67->71%, 42->54% — which says the registration is systematically
+     off, but nowhere near enough to decode.
+   - **The version block measures the size correctly, and it does not help.**
+     Versions 7+ carry 18 BCH-protected bits stating the version outright,
+     beside the finders where sampling is most accurate. Swept across
+     candidate sizes it votes decisively and correctly: v25 on the
+     117-module symbol, v40 on the version 40s, scattered singletons
+     dissenting. Wired into the decoder's size candidates it converts
+     **zero** images and costs 0.2 points budgeted, so it was reverted.
+
+   Five independent sources of correct information — size from timing, size
+   from the version block, located alignment anchors, sub-pixel refinement,
+   and a global registration sweep — each supply the truth and none decodes an
+   additional image. The sampled matrix says why: finders read 92-100% while
+   the timing pattern reads 56% and the interior worse. The corners are
+   readable and the middle is not, which is precisely why every
+   corner-derived correction fails and why the version block reads perfectly
+   while the payload does not.
+
+   Timing-derived sizing was likewise measured as a general fallback and
+   deliberately NOT added: `estimateSize` returns null on only 29 of 557
+   images corpus-wide (5.2%), concentrated in exactly the categories that fail
+   downstream anyway.
    The surface sags non-linearly between the finders — timing accuracy runs
    100% at both ends and 0% in the middle — but correcting that is
    demonstrably not sufficient: a grid with 100% timing accuracy still
