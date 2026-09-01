@@ -11,6 +11,7 @@
  */
 
 export { createQrDecoder } from "./qr/decoder.js";
+export { withClearance } from "./qr/locate.js";
 export type { QrDecoderOptions } from "./qr/decoder.js";
 
 export {

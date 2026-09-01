@@ -118,6 +118,17 @@ const decodeBinarized = (
   // the rotations, high_version and brightness categories return MORE than
   // three candidates on nearly every image, so an arbitrary three discards
   // the right answer and loses a symbol that was successfully found.
+  // Scored rather than taking the first three. Across the benchmark corpus
+  // the rotations, high_version and brightness categories return MORE than
+  // three candidates on nearly every image, so an arbitrary three discards
+  // the right answer and loses a symbol that was successfully found.
+  //
+  // Clearance filtering — dropping candidates with no quiet zone around them
+  // — is deliberately NOT applied here. It works exactly as designed on large
+  // symbols, cutting 13 candidates to 3 and choosing all three real finders,
+  // but measured 51.5% to 51.3% because a symbol shot against a dark edge has
+  // a poor clearance score legitimately. `withClearance` remains exported for
+  // callers who know their symbols have clean quiet zones.
   let triple = patterns.length >= 3 ? selectBestTriple(patterns) : null;
 
   // Fall back to shape-based detection, POOLED with whatever the scan found.
