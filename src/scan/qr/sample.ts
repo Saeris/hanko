@@ -13,7 +13,11 @@
  */
 
 import type { BitMatrix, GrayImage, Point } from "../types.js";
-import type { FinderTriple } from "./locate.js";
+import {
+  cornersAlongAxes,
+  finderOutline,
+  type FinderTriple
+} from "./locate.js";
 
 /**
  * A projective (homography) transform between two quadrilaterals.
@@ -162,6 +166,188 @@ export const transformForSymbol = (
     bottomRight,
     finders.bottomLeft.center
   );
+};
+
+/**
+ * Fit a transform to more correspondences than it strictly needs.
+ *
+ * {@link transformForSymbol} solves exactly: four source points, four
+ * destination points, one answer. That is fine when all four are measured,
+ * and this symbol only ever has three — the fourth corner has no finder and
+ * is estimated, so a guess is baked into every sample the grid takes.
+ *
+ * Measuring each finder's outer square instead gives four points per finder
+ * and twelve in total, which over-determines an eight-parameter homography.
+ * Least squares then averages the noise across all twelve rather than
+ * propagating one bad estimate through everything, and no corner has to be
+ * invented.
+ *
+ * Solved by the Direct Linear Transform: each correspondence contributes two
+ * rows, and the resulting system is reduced through its normal equations.
+ * Eight unknowns makes that an 8x8 solve, which is small enough that the
+ * numerical cost of normal equations does not matter and their simplicity
+ * does.
+ *
+ * Returns `null` when the system is singular — collinear points, or a
+ * degenerate outline.
+ */
+export const fitTransform = (
+  correspondences: ReadonlyArray<{
+    /** Position in the unit square that spans finder centres. */
+    readonly source: Point;
+    /** Where that lands in the image. */
+    readonly target: Point;
+  }>
+): Transform | null => {
+  if (correspondences.length < 4) return null;
+
+  // Normal equations: an 8x8 system with a right-hand column.
+  const normal = Array.from({ length: 8 }, () => new Float64Array(9));
+
+  const accumulate = (row: readonly number[]): void => {
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 8; j++) normal[i][j] += row[i] * row[j];
+      normal[i][8] += row[i] * row[8];
+    }
+  };
+
+  for (const { source, target } of correspondences) {
+    accumulate([
+      source.x,
+      source.y,
+      1,
+      0,
+      0,
+      0,
+      -source.x * target.x,
+      -source.y * target.x,
+      target.x
+    ]);
+    accumulate([
+      0,
+      0,
+      0,
+      source.x,
+      source.y,
+      1,
+      -source.x * target.y,
+      -source.y * target.y,
+      target.y
+    ]);
+  }
+
+  // Gauss-Jordan with partial pivoting.
+  for (let column = 0; column < 8; column++) {
+    let pivot = column;
+    for (let row = column + 1; row < 8; row++) {
+      if (Math.abs(normal[row][column]) > Math.abs(normal[pivot][column])) {
+        pivot = row;
+      }
+    }
+    if (Math.abs(normal[pivot][column]) < 1e-12) return null;
+
+    const swap = normal[column];
+    normal[column] = normal[pivot];
+    normal[pivot] = swap;
+
+    for (let row = 0; row < 8; row++) {
+      if (row === column) continue;
+      const factor = normal[row][column] / normal[column][column];
+      for (let j = column; j < 9; j++) {
+        normal[row][j] -= factor * normal[column][j];
+      }
+    }
+  }
+
+  const h = Array.from({ length: 8 }, (_, i) => normal[i][8] / normal[i][i]);
+  if (h.some((value) => !Number.isFinite(value))) return null;
+
+  // Transposed relative to the textbook layout, matching `applyTransform`:
+  // x' = (a11*x + a21*y + a31) / (a13*x + a23*y + a33).
+  return {
+    a11: h[0],
+    a21: h[1],
+    a31: h[2],
+    a12: h[3],
+    a22: h[4],
+    a32: h[5],
+    a13: h[6],
+    a23: h[7],
+    a33: 1
+  };
+};
+
+/**
+ * Build a transform from the finders' measured outer squares.
+ *
+ * Each finder's outer ring is 7 modules on a side at a known symbol position,
+ * so its four corners are four correspondences. Three finders give twelve,
+ * which {@link fitTransform} solves in the least-squares sense — no estimated
+ * fourth corner enters the fit at all.
+ *
+ * Returns `null` if any finder's outline cannot be traced, so the caller can
+ * fall back to the three-centre transform.
+ */
+export const transformFromOutlines = (
+  matrix: BitMatrix,
+  finders: FinderTriple,
+  size: number
+): Transform | null => {
+  const span = size - 7;
+
+  // Symbol axes, for ordering each outline's corners. Image axes would pair
+  // corners with the wrong module coordinates on a rotated symbol.
+  const across = {
+    x: finders.topRight.center.x - finders.topLeft.center.x,
+    y: finders.topRight.center.y - finders.topLeft.center.y
+  };
+  const down = {
+    x: finders.bottomLeft.center.x - finders.topLeft.center.x,
+    y: finders.bottomLeft.center.y - finders.topLeft.center.y
+  };
+
+  const acrossLength = Math.hypot(across.x, across.y);
+  const downLength = Math.hypot(down.x, down.y);
+  if (acrossLength === 0 || downLength === 0) return null;
+
+  const u = { x: across.x / acrossLength, y: across.y / acrossLength };
+  const v = { x: down.x / downLength, y: down.y / downLength };
+
+  const correspondences: Array<{ source: Point; target: Point }> = [];
+
+  // Module coordinate of each finder's top-left corner.
+  const placements = [
+    { finder: finders.topLeft, x: 0, y: 0 },
+    { finder: finders.topRight, x: size - 7, y: 0 },
+    { finder: finders.bottomLeft, x: 0, y: size - 7 }
+  ];
+
+  for (const { finder, x, y } of placements) {
+    const outline = finderOutline(matrix, finder);
+    if (outline === null) return null;
+
+    const corners = cornersAlongAxes(outline, u, v);
+    const modules = [
+      { x, y },
+      { x: x + 7, y },
+      { x: x + 7, y: y + 7 },
+      { x, y: y + 7 }
+    ];
+
+    for (const [index, module] of modules.entries()) {
+      correspondences.push({
+        // Rebased onto the same unit square `sampleGrid` samples in, whose
+        // corners are module (3.5, 3.5) and (size - 3.5, size - 3.5).
+        source: {
+          x: (module.x - 3.5) / span,
+          y: (module.y - 3.5) / span
+        },
+        target: corners[index]
+      });
+    }
+  }
+
+  return fitTransform(correspondences);
 };
 
 /**

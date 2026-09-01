@@ -50,7 +50,8 @@ import {
   samplePiecewise,
   searchCorner,
   sampleGrid,
-  transformForSymbol
+  transformForSymbol,
+  transformFromOutlines
 } from "./sample.js";
 
 /** Options for {@link createQrDecoder}. */
@@ -218,6 +219,38 @@ const decodeBinarized = (
   let transform = rough;
   let sampled = sampleGrid(matrix, rough, size);
   let decoded = sampled === null ? null : decodeMatrix(sampled);
+
+  // Before searching for a corner, try measuring one instead.
+  //
+  // The transform above is fitted to three finder CENTRES plus an estimated
+  // fourth corner, so a guess is present in every sample it takes. Each
+  // finder's outer square is 7 modules on a side at a known position, so
+  // tracing its outline gives four measured points per finder and twelve in
+  // total — an over-determined fit with no estimate in it.
+  //
+  // Measured on the corpus with flat sampling alone, twelve points read
+  // `perspective` 18 of 26 against four points' 4, `nominal` 60 of 109
+  // against 38, and `glare` 9 of 31 against 3.
+  if (decoded === null) {
+    for (const candidateSize of [size, size - 4, size + 4]) {
+      if (candidateSize < 21 || candidateSize > 177) continue;
+
+      const fitted = transformFromOutlines(matrix, finders, candidateSize);
+      if (fitted === null) break;
+
+      const fittedGrid = sampleGrid(matrix, fitted, candidateSize);
+      if (fittedGrid === null) continue;
+
+      const fittedDecode = decodeMatrix(fittedGrid);
+      if (fittedDecode !== null) {
+        transform = fitted;
+        sampled = fittedGrid;
+        decoded = fittedDecode;
+        size = candidateSize;
+        break;
+      }
+    }
+  }
 
   // Each corner is tried at the estimated size and its neighbours. Size comes
   // from finder spacing divided by module size, so an error in either lands

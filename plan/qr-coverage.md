@@ -51,27 +51,27 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 ## Real-photograph coverage
 
 The 718-image BoofCV benchmark, which is photographs rather than renders.
-Overall **62.7%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
+Overall **68.8%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
 ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 
-| condition                               | rate     | what is known                   |
-| --------------------------------------- | -------- | ------------------------------- |
-| Multiple codes per frame (`lots`)       | 100.0%   |                                 |
-| Hard shadows (`shadows`)                | 84.2%    | local binarization              |
-| Rotated (`rotations`)                   | 81.8%    |                                 |
-| Ordinary photographs (`nominal`)        | 80.8%    | 250-image category, the largest |
-| Even lighting (`brightness`)            | 75.0%    |                                 |
-| Motion blur (`blurred`)                 | 73.6%    | blur retry                      |
-| Curved surfaces (`curved`)              | 65.7%    | piecewise sampling              |
-| Non-compliant symbols                   | 64.2%    |                                 |
-| Specular highlights (`bright_spots`)    | 63.6%    |                                 |
-| Small in a large frame (`close`)        | 59.5%    | multi-scale retry, both ways    |
-| Pathological / adversarial              | 57.7%    |                                 |
-| Screens and monitors (`monitor`)        | 56.0%    | low-pass retry defeats moire    |
-| Glare                                   | 50.0%    |                                 |
-| Perspective / oblique angles            | 48.8%    | believed near its ceiling       |
-| Physically damaged                      | 35.4%    |                                 |
-| **Very large symbols (`high_version`)** | **2.9%** | see below                       |
+| condition                                | rate      | what is known                    |
+| ---------------------------------------- | --------- | -------------------------------- |
+| Multiple codes per frame (`lots`)        | 100.0%    |                                  |
+| Hard shadows (`shadows`)                 | 89.5%     | local binarization               |
+| Rotated (`rotations`)                    | 88.6%     |                                  |
+| Small in a large frame (`close`)         | 85.7%     | multi-scale retry, both ways     |
+| Ordinary photographs (`nominal`)         | 84.0%     | 250-image category, the largest  |
+| Even lighting (`brightness`)             | 78.6%     |                                  |
+| Motion blur (`blurred`)                  | 73.6%     | blur retry                       |
+| Screens and monitors (`monitor`)         | 72.0%     | low-pass retry defeats moire     |
+| Non-compliant symbols                    | 71.6%     |                                  |
+| Curved surfaces (`curved`)               | 68.7%     | piecewise sampling               |
+| Specular highlights (`bright_spots`)     | 63.6%     |                                  |
+| Glare                                    | 62.5%     |                                  |
+| Pathological / adversarial               | 57.7%     |                                  |
+| Perspective / oblique angles             | 48.8%     | finder DETECTION, not fitting    |
+| Physically damaged                       | 39.6%     |                                  |
+| **Very large symbols (`high_version`)**  | **14.7%** | see below                        |
 
 Re-measure rather than cite: every figure here is a snapshot of a ladder that
 changes often.
@@ -323,7 +323,7 @@ But sweeping every ladder binarization and size, with erasures offered at each,
 recovers none of them. The measurement that explains it: on failing images that
 produce a grid at all, **median timing accuracy is 50-58%** — chance. Localized
 damage leaves the timing pattern near 95% intact and destroys one region;
-these grids are wrong *everywhere*.
+these grids are wrong _everywhere_.
 
 So the failures in `glare`, `bright_spots` and `damaged` are not blobs of
 destroyed modules over an otherwise-good grid. They are the same
