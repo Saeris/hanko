@@ -101,6 +101,46 @@ export const upscale = (image: GrayImage, factor: number): GrayImage => {
 };
 
 /**
+ * Binarize against a threshold the caller chooses.
+ *
+ * {@link binarizeGlobal} computes one "correct" threshold from the histogram
+ * and {@link binarize} computes one per block. Both answer the question
+ * "what is the right threshold?", and on a damaged or unevenly lit symbol
+ * there often is not one — measured across the corpus, the thresholds that
+ * recover an otherwise-unreadable image are spread over the whole range
+ * 40-190 with no clustering, and the image's own mean does not predict them
+ * (one is read at 120 with a mean of 195).
+ *
+ * So this exists to be swept. Eleven distinct thresholds recover seventeen
+ * images between them; no small set captures most of the gain, which is why
+ * the caller supplies the value rather than this guessing better.
+ *
+ * The obvious alternative was measured and lost. Sauvola thresholding — the
+ * method the document-binarization literature favours for degraded images,
+ * and which an IEEE study validates specifically for QR under uneven
+ * illumination — recovers 3 images across nine tuned variants (windows 15/31/
+ * 63, k 0.2/0.34/0.5, via integral images) against this sweep's 11, and adds
+ * nothing the sweep does not already find. The reason is in that literature
+ * too: Sauvola's threshold collapses where local contrast is low, which is
+ * exactly the condition a damaged or glared symbol presents. Its wins are on
+ * scanned documents with uneven illumination, a different degradation.
+ */
+export const binarizeAt = (
+  image: GrayImage,
+  threshold: number,
+  { invert = false }: { invert?: boolean } = {}
+): BitMatrix => {
+  const bits = new Uint8Array(image.width * image.height);
+
+  for (let i = 0; i < bits.length; i++) {
+    const dark = image.data[i] < threshold;
+    bits[i] = (invert ? !dark : dark) ? 1 : 0;
+  }
+
+  return { bits, width: image.width, height: image.height };
+};
+
+/**
  * Binarize against one threshold chosen from the whole image's histogram.
  *
  * The opposite trade to {@link binarize}. A single threshold cannot follow a

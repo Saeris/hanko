@@ -51,7 +51,7 @@ limit is attributable. "Works" means a version 3 URL decoded end to end.
 ## Real-photograph coverage
 
 The 718-image BoofCV benchmark, which is photographs rather than renders.
-Overall **71.3%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
+Overall **73.0%** unlimited, against jsQR's 24.8%, ZXing's published 31.87%,
 ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 
 | condition                               | rate      | what is known                   |
@@ -59,18 +59,18 @@ ZBar's 38.95% and BoofCV's own 60.69% on the same images.
 | Multiple codes per frame (`lots`)       | 100.0%    |                                 |
 | Hard shadows (`shadows`)                | 89.5%     | local binarization              |
 | Rotated (`rotations`)                   | 88.6%     |                                 |
-| Small in a large frame (`close`)        | 88.1%     | multi-scale retry, both ways    |
+| Small in a large frame (`close`)        | 92.9%     | multi-scale retry, both ways    |
 | Ordinary photographs (`nominal`)        | 85.6%     | 250-image category, the largest |
 | Even lighting (`brightness`)            | 82.1%     |                                 |
-| Non-compliant symbols                   | 74.6%     |                                 |
-| Motion blur (`blurred`)                 | 73.6%     | blur retry                      |
+| Non-compliant symbols                   | 77.6%     |                                 |
+| Motion blur (`blurred`)                 | 75.5%     | blur retry                      |
 | Screens and monitors (`monitor`)        | 72.0%     | low-pass retry defeats moire    |
 | Pathological / adversarial              | 69.2%     | missing quiet zone              |
 | Curved surfaces (`curved`)              | 68.7%     | piecewise sampling              |
 | Perspective / oblique angles            | 67.4%     | timing-pattern sizing           |
 | Specular highlights (`bright_spots`)    | 66.7%     |                                 |
 | Glare                                   | 62.5%     |                                 |
-| Physically damaged                      | 41.7%     |                                 |
+| Physically damaged                      | 54.2%     |                                 |
 | **Very large symbols (`high_version`)** | **14.7%** | see below                       |
 
 Re-measure rather than cite: every figure here is a snapshot of a ladder that

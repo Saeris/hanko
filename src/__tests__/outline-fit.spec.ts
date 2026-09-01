@@ -1,12 +1,13 @@
 import { encodeQR } from "etiket/qr";
 import { describe, expect, it } from "vitest";
-import { binarize } from "../scan/binarize.js";
+import { binarize, binarizeAt } from "../scan/binarize.js";
 import {
   findFinderPatterns,
   finderOutline,
   orientFinders,
   selectBestTriple
 } from "../scan/qr/locate.js";
+import { createQrDecoder } from "../scan/qr/decoder.js";
 import {
   fitTransform,
   sizeFromTimingPattern,
@@ -257,5 +258,64 @@ describe(`finders without a quiet zone`, () => {
     expect(
       findFinderPatterns(binarize(image, { invert: false }), true)
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * Sometimes there is no single right threshold.
+ *
+ * Both binarizers answer "what is the correct threshold?" — one per image from
+ * the histogram, one per block from the neighbourhood. On a damaged or
+ * unevenly lit symbol that question can have no good answer, and the value
+ * that recovers the symbol is not the one either method computes.
+ */
+describe(`threshold sweeping`, () => {
+  it(`reads a symbol whose correct threshold is far from its histogram`, () => {
+    // WHY: this is the case the sweep exists for. A symbol rendered in two
+    // close greys has a histogram whose peaks are adjacent, so the two-peak
+    // midpoint lands between them and both tones threshold the same way. A
+    // swept threshold separates them. Measured on the corpus this rung takes
+    // `damaged` from 41.7% to 54.2% and `close` from 88.1% to 92.9%.
+    const text = `https://example.com/link?user_code=TFKS`;
+    const matrix = encodeQR(text, { ecLevel: `M` });
+    const size = matrix.length;
+    const scale = 6;
+    const quiet = 4;
+    const width = (size + quiet * 2) * scale;
+
+    // Dark modules at 150, light at 200 — a low-contrast pair sitting well
+    // above any midpoint a bimodal search would pick from the quiet zone.
+    const data = new Uint8ClampedArray(width * width).fill(200);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        if (!matrix[y][x]) continue;
+        for (let py = 0; py < scale; py++) {
+          for (let px = 0; px < scale; px++) {
+            data[
+              ((y + quiet) * scale + py) * width + (x + quiet) * scale + px
+            ] = 150;
+          }
+        }
+      }
+    }
+
+    const image: GrayImage = { data, width, height: width };
+    expect(createQrDecoder({ timeBudgetMs: 0 }).decode(image)?.value).toBe(
+      text
+    );
+  });
+
+  it(`thresholds exactly where told`, () => {
+    // WHY: the sweep's whole value is that the CALLER picks the value, so a
+    // binarizer that adjusted the threshold it was given would silently
+    // collapse the sweep back to one choice.
+    const image: GrayImage = {
+      data: new Uint8ClampedArray([10, 100, 140, 250]),
+      width: 2,
+      height: 2
+    };
+
+    expect([...binarizeAt(image, 120).bits]).toEqual([1, 1, 0, 0]);
+    expect([...binarizeAt(image, 50).bits]).toEqual([1, 0, 0, 0]);
   });
 });

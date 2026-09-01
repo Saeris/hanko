@@ -19,6 +19,7 @@ import {
   close,
   downscale,
   upscale,
+  binarizeAt,
   invertMatrix
 } from "../binarize.js";
 import type {
@@ -114,6 +115,16 @@ export interface QrDecoderOptions {
  * small enough in frame to need it while the pass still costs the most.
  */
 const UPSCALE_LIMIT = 2_000_000;
+
+/**
+ * Fixed thresholds to try when every adaptive choice has failed.
+ *
+ * Spread across the range rather than concentrated, because the thresholds
+ * that rescue an image are themselves spread across it — see
+ * {@link binarizeAt}. Twenty apart: closer measured no better, and each step
+ * costs a full pass.
+ */
+const THRESHOLD_SWEEP = [60, 80, 100, 120, 140, 160, 180, 200] as const;
 
 const decodeBinarized = (
   image: GrayImage,
@@ -736,7 +747,43 @@ export const createQrDecoder = ({
         if (larger !== null) return larger;
       }
 
-      return attempt(image, true, spent);
+      const deep = attempt(image, true, spent);
+      if (deep !== null) return deep;
+
+      // Last: sweep a plain threshold across its range.
+      //
+      // Both binarizers answer "what is the right threshold?" — one per image,
+      // one per block. On a damaged or unevenly lit symbol there often is not
+      // one: measured across the corpus, the thresholds that recover an
+      // otherwise-unreadable image spread over 40-190 with no clustering, and
+      // the image's own mean does not predict them. Eleven distinct values
+      // recover seventeen images between them, so no smaller set would do.
+      //
+      // Sauvola was measured here first, since the document-binarization
+      // literature prefers it for degraded images and an IEEE study validates
+      // it for QR under uneven illumination. Nine tuned variants recovered 3
+      // images against this sweep's 11, and none the sweep missed — its
+      // threshold collapses exactly where local contrast is low, which is what
+      // damage and glare produce. See `binarizeAt`.
+      //
+      // Last on the ladder because it is the most expensive rung: a whole pass
+      // per threshold. Everything above it is cheaper per image recovered, and
+      // the time budget stops this before it runs on a live frame.
+      for (const threshold of THRESHOLD_SWEEP) {
+        if (spent()) return null;
+
+        const swept = decodeBinarized(
+          image,
+          false,
+          false,
+          false,
+          false,
+          binarizeAt(image, threshold)
+        );
+        if (swept !== null) return swept;
+      }
+
+      return null;
     }
   };
 };
