@@ -336,6 +336,50 @@ is supplied, and is exactly what these categories will need **once** the grid
 lands — but detection and registration, not correction capacity, are what
 gate them today.
 
+## What limits `damaged`, `glare` and `bright_spots`
+
+Four hypotheses tested after the outline fit landed, none of which converted
+images. Recorded because each looked well-founded and the measurements say
+something specific about where these categories actually sit.
+
+Failures break down by the stage that stops them:
+
+| category       | failures | no version | format unreadable | format OK, still fails |
+| -------------- | -------- | ---------- | ----------------- | ---------------------- |
+| `damaged`      | 29       | 10         | 5                 | 14                     |
+| `glare`        | 21       | 7          | 3                 | 11                     |
+| `bright_spots` | 12       | 6          | 0                 | 6                      |
+
+- **Alignment patterns as extra correspondences.** quirc anchors its fourth
+  corner on a measured alignment pattern rather than an estimate, so adding
+  every located alignment centre to the twelve finder-corner correspondences
+  should tighten the fit further. It converts nothing: on the images that
+  reach the refit, the outline fit alone already decodes them.
+- **Erasures from saturation, and from ambiguity.** The decoder gained
+  erasure support two rounds ago and it is still not the binding constraint.
+  Saturation marks a median 2-21% of modules depending on category and gains
+  0; ranking modules by distance from the local black/white midpoint and
+  erasing the least confident 5-20% gains 1. Three detectors tried across two
+  rounds, including an oracle blob, all confirm the same thing: the damage on
+  these images is not a localised region over an otherwise-good grid.
+- **Brute-forcing the format.** Format info is 15 bits with 32 legal values,
+  so trying all of them is cheap and self-validating. It converts nothing,
+  because both format copies failing is a *symptom* of heavy damage rather
+  than an independent gate — 30 BCH-protected bits in two well-separated
+  corners do not both fail unless the damage is extensive.
+
+The measurement that explains the residue is timing accuracy on grids that do
+read a format: **`glare` 92%, `damaged` 65%, `bright_spots` 54%**. So
+`damaged` and `bright_spots` are still registration failures wearing a damage
+label, while `glare`'s best images are genuinely well-registered — four of
+them sample the timing pattern at **98-100%** and still fail Reed-Solomon on
+their single data block.
+
+Those four are mostly **ecL**, the weakest error-correction level, which
+tolerates about 7% of codewords. A perfect grid over a symbol whose encoder
+chose minimum redundancy is simply past what the symbol can survive. Like
+`high_version`, that is an error budget rather than a fixable stage.
+
 ## Performance envelope
 
 | case                       | cost                                              |
