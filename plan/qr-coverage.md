@@ -522,6 +522,35 @@ runtime rises 105s -> 156s; the 120ms budgeted rate is unchanged at 54.6%,
 because the budget clips every one of these rungs on a live frame. Only a
 still pays for them.
 
+### Three workloads, three different hot spots
+
+No public QR *video* corpus exists — the available datasets are all still
+images (Roboflow's 1,547, a merged 8,748-image set), and the video research is
+deblurring work with no barcode content. So the workloads are synthesised, and
+which one is used decides what the profiler shows:
+
+| workload            | hottest function     | share of JS |
+| ------------------- | -------------------- | ----------- |
+| still (`decode`)    | `scoreTransform`     | 27%         |
+| empty (`noise`)     | candidate dedup scan | quadratic   |
+| viewfinder (`video`)| `findFinderBlobs`    | 22%         |
+
+None of the three appears near the top for the others. `findFinderBlobs` in
+particular rarely fires on a still or an empty frame, so two of the three
+benchmarks hid it completely.
+
+Fixes measured from the viewfinder profile, none of which changed coverage:
+
+- **The blob flood's inner loop.** A division and a modulo per popped pixel to
+  recover coordinates from an index, plus a four-element array of pairs
+  allocated to iterate the neighbours. On a blob of tens of thousands of
+  pixels that is the whole cost — worst pass **75ms -> 22ms**.
+- **The denoise closing's allocation.** Four full-size buffers per call, 3.7MB
+  on a 1280x720 frame, on half of every rung's passes. The four sweeps
+  ping-pong, so two suffice.
+
+Unlimited corpus runtime **176s -> 136s** across the two.
+
 ### The time budget does not bound the time
 
 `timeBudgetMs` is checked between ladder rungs, so it bounds how much work is
