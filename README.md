@@ -209,6 +209,49 @@ raises it while a symbol is in view.
 Coverage per condition, and the negative results behind it, live in
 [plan/qr-coverage.md](plan/qr-coverage.md). Both move often.
 
+## 🏷️ Product barcodes
+
+`@saeris/hanko/scan/linear` reads the EAN/UPC family — what is printed on retail
+packaging. Same shape as the QR decoder, same binarization underneath, separate
+entry point so neither pays for the other's tables.
+
+It is **one symbology wearing four names**: UPC-A is an EAN-13 whose first digit
+is zero, UPC-E is a compressed EAN-13, and EAN-8 is the same encoding at a
+shorter length. One decoder reads all of them and reports which shape it found,
+because that is what callers match on.
+
+```ts
+import { createLinearDecoder } from "@saeris/hanko/scan/linear";
+import { toGray } from "@saeris/hanko/scan";
+
+const decoder = createLinearDecoder();
+const symbol = decoder.decode(toGray(rgba, width, height));
+
+symbol?.format; // "upc_a" | "ean_13" | "ean_8" | "upc_e"
+symbol?.value; // "036000291452" — twelve digits for a UPC-A, as printed
+```
+
+A UPC-A comes back as twelve digits rather than thirteen with a leading zero,
+because that is what is on the package and what a product database is keyed by.
+
+### Why it asks two rows to agree
+
+This family carries **no error correction**. A QR symbol can lose a third of
+itself and still decode; a linear barcode either reads or does not, and the
+check digit — one digit in ten — is the only thing between a wrong answer and a
+_confident_ wrong answer.
+
+That is not theoretical. Measured against the QR corpus, which contains no
+linear barcodes at all, accepting a single row produced a confident EAN-8 on
+**3 of 51** photographs: dense QR modules are alternating runs, and occasionally
+eight of them satisfy both the pattern match and the check digit.
+
+A real barcode is many pixels tall and reads identically on every row through
+it. A coincidence does not survive being asked twice, so the decoder requires
+agreement across rows — which took that to **0 of 51** while still reading at
+one pixel per module, under blur, at low contrast, upside down, and with no
+quiet zone.
+
 ## 🏗️ How it works
 
 hanko owns the **grant lifecycle** and nothing else. It never mints sessions or

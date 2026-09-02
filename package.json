@@ -67,6 +67,13 @@
         "default": "./dist/scan/index.mjs"
       }
     },
+    "./scan/linear": {
+      "import": {
+        "development": "./src/scan/linear/index.ts",
+        "types": "./dist/scan/linear/index.d.mts",
+        "default": "./dist/scan/linear/index.mjs"
+      }
+    },
     "./scan/worker": {
       "import": {
         "development": "./src/scan/worker.ts",

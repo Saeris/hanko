@@ -41,6 +41,18 @@ export interface Point {
   readonly y: number;
 }
 
+/**
+ * The symbologies this package can produce, spelled as BarcodeDetector does.
+ *
+ * The linear ones are a family rather than four independent formats: UPC-A is
+ * an EAN-13 whose first digit is zero, UPC-E is a compressed EAN-13, and EAN-8
+ * is the same encoding at a shorter length. One decoder reads all four and
+ * reports which shape it found, because that is what callers match on — a
+ * lookup against a product database wants to know it has a GTIN-12 rather than
+ * a GTIN-13.
+ */
+export type BarcodeFormat = `qr_code` | `ean_13` | `ean_8` | `upc_a` | `upc_e`;
+
 /** What a successful decode yields. */
 export interface DecodedSymbol {
   /** The decoded payload. */
@@ -49,9 +61,11 @@ export interface DecodedSymbol {
    * The symbology that produced it, as a BarcodeDetector-compatible name.
    *
    * Shaped to match that API without depending on it: if it ever ships, a
-   * compatibility layer is a rename, not a redesign.
+   * compatibility layer is a rename, not a redesign. The names are its
+   * spelling, not ours, which is also why `upc_a` and `ean_13` are separate
+   * here despite being one symbology underneath.
    */
-  readonly format: `qr_code`;
+  readonly format: BarcodeFormat;
   /** Corners in image space, clockwise from top-left. */
   readonly cornerPoints: readonly Point[];
 }
