@@ -18,7 +18,15 @@ import { createLinearDecoder } from "@saeris/hanko/scan/linear";
 // ladder may run to exhaustion — worth roughly twenty points of recognition
 // against the 120ms a synchronous decode has to respect.
 const qr = createQrDecoder({ timeBudgetMs: 0 });
-const linear = createLinearDecoder({ timeBudgetMs: 0 });
+// UPC-E is asked for explicitly, because the library does not enable it by
+// default — six digits is thin evidence and it costs false positives on a
+// corpus that holds none. This is a scanner pointed at real packaging, where
+// bottle necks and small cans genuinely carry the compressed form, so the
+// trade lands the other way here.
+const linear = createLinearDecoder({
+  timeBudgetMs: 0,
+  formats: [`ean_13`, `ean_8`, `upc_a`, `upc_e`]
+});
 
 /**
  * QR first, then linear.

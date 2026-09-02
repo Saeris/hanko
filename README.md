@@ -246,6 +246,7 @@ More than the name suggests, because several things are EAN-13 underneath:
 | Books (ISBN-13)          | `ean_13` | prefix 978/979                        |
 | Magazines (ISSN)         | `ean_13` | prefix 977                            |
 | Small items              | `ean_8`  |                                       |
+| Bottle necks, small cans | `upc_e`  | **opt in** — see below                |
 
 Not covered: **Code 128** and **ITF-14**, which are genuinely different
 symbologies. ITF-14 marks shipping cases rather than the packaging a person
@@ -275,9 +276,9 @@ taken with camera phones, split by whether the camera had autofocus:
 
 | Subset            | Images | Correct   | Misread |
 | ----------------- | ------ | --------- | ------- |
-| With autofocus    | 215    | **92.1%** | 0       |
-| Without autofocus | 215    | **27.0%** | 0       |
-| Total             | 430    | **59.5%** | **0**   |
+| With autofocus    | 215    | **91.6%** | 0       |
+| Without autofocus | 215    | **26.5%** | 0       |
+| Total             | 430    | **59.1%** | 1       |
 
 The misread column is the one to watch. A QR symbol reconstructs or it does
 not, so "read" and "read correctly" are one number; this family has no
@@ -308,6 +309,26 @@ could not. 26% classically is not obviously far from what the approach allows.
 yarn corpus:barcodes  # fetch the corpus (~226 MB, CC BY 3.0)
 yarn bench:barcodes   # run it
 ```
+
+### UPC-E has to be asked for
+
+A UPC-E is the compressed form — six digits where a full UPC-A will not fit,
+which is what a bottle neck usually carries. It is not a short barcode but a
+complete GTIN-12 with its zeros squeezed out, so the decoder reports the twelve
+digits it stands for rather than the six that are printed.
+
+It is **not** in the default format set, and that is a measurement rather than a
+preference. Six digits plus a parity pattern is thin evidence, and a UPC-E's 35
+runs fit inside a full EAN-13's 59 — so enabled by default it produced **14
+false positives** on a corpus containing no UPC-E at all, which was every
+misread in that run.
+
+```ts
+createLinearDecoder({ formats: [`ean_13`, `upc_a`, `upc_e`] });
+```
+
+Ask for it where the packaging warrants it. It reads those correctly; the false
+positives are the price of guessing, not of the format.
 
 ### Why it asks two rows to agree
 

@@ -18,8 +18,19 @@ import {
   L_CODES,
   PARITY_PATTERNS,
   R_CODES,
+  UPC_E_PARITY,
+  expandUpcE,
   isValid
 } from "./patterns.js";
+
+/**
+ * The fewest runs any symbol in this family can occupy.
+ *
+ * A UPC-E: a three-run start guard, six digits of four runs each, and a
+ * six-run end guard. Anything shorter cannot be a barcode, and rejecting it
+ * before the search saves walking rows of ordinary artwork.
+ */
+const MINIMUM_RUNS = 3 + 6 * 4 + 6;
 
 /** A run of one colour, in pixels. */
 interface Run {
@@ -167,7 +178,96 @@ export interface LinearMatch {
   readonly end: number;
   /** How well the runs matched, for choosing between rows. */
   readonly error: number;
+  /**
+   * Whether this came from a UPC-E.
+   *
+   * `digits` is the expanded twelve either way, so the shape alone cannot say
+   * which symbol was on the package — and a caller may reasonably care, since
+   * a UPC-E is what fits where a UPC-A does not.
+   */
+  readonly compressed: boolean;
 }
+
+/**
+ * Decode a UPC-E starting at a given run.
+ *
+ * The compressed form, used where a full UPC-A will not fit — a bottle neck, a
+ * small carton. It is a complete GTIN-12 with its runs of zeros squeezed out,
+ * so what comes back is the twelve digits it stands for rather than the six
+ * that are printed, which is what a product database is keyed by.
+ */
+const decodeUpcE = (
+  runs: readonly Run[],
+  at: number,
+  guardError: number,
+  tolerance: number
+): LinearMatch | null => {
+  const digits: number[] = [];
+  const parities: number[] = [];
+  let error = guardError;
+  let cursor = at + 3;
+
+  for (let i = 0; i < 6; i++) {
+    const match = readDigit(runs, cursor, [0, 1], tolerance);
+    if (match === null) return null;
+    digits.push(match.digit);
+    parities.push(match.alphabet === 1 ? 1 : 0);
+    error += match.error;
+    cursor += 4;
+  }
+
+  // Six modules of guard — space-bar-space-bar-space-bar — against the three
+  // that end an EAN. That difference is most of what tells the two apart, so
+  // it is checked rather than assumed.
+  if (cursor + 6 > runs.length) return null;
+  const endError = patternError(
+    [
+      runs[cursor].length,
+      runs[cursor + 1].length,
+      runs[cursor + 2].length,
+      runs[cursor + 3].length,
+      runs[cursor + 4].length,
+      runs[cursor + 5].length
+    ],
+    [1, 1, 1, 1, 1, 1],
+    tolerance
+  );
+  if (endError === Infinity) return null;
+  error += endError;
+
+  // The parity pattern names the check digit. Number system 1 uses the
+  // complement of system 0's table, so a pattern matching neither is not a
+  // UPC-E — which is the guard that stops ordinary artwork becoming one.
+  const inverted = parities.map((bit) => (bit === 1 ? 0 : 1));
+
+  for (const [system, wanted] of [
+    [0, parities],
+    [1, inverted]
+  ] as const) {
+    const check = UPC_E_PARITY.findIndex((pattern) =>
+      pattern.every((bit, index) => bit === wanted[index])
+    );
+    if (check === -1) continue;
+
+    const full = expandUpcE(digits, system);
+    if (full === null) continue;
+
+    // Two things must agree: the check digit the parity claimed, and the one
+    // the expanded digits compute to. A coincidence rarely satisfies both.
+    if (full[full.length - 1] !== check) continue;
+    if (!isValid(full)) continue;
+
+    return {
+      digits: full,
+      start: runs[at].start,
+      end: runs[cursor + 5].start + runs[cursor + 5].length,
+      error: error / 8,
+      compressed: true
+    };
+  }
+
+  return null;
+};
 
 /**
  * Decode an EAN-13, UPC-A or EAN-8 starting at a given run.
@@ -279,11 +379,25 @@ const decodeFrom = (
       digits: full,
       start: runs[at].start,
       end: runs[cursor + 2].start + runs[cursor + 2].length,
-      error: error / full.length
+      error: error / full.length,
+      compressed: false
     };
   }
 
-  return null;
+  // UPC-E last, and the order is load-bearing.
+  //
+  // A UPC-E occupies 35 runs against an EAN-13's 59, so its pattern fits
+  // INSIDE the left half of a real EAN-13 — tried first, it matched there and
+  // returned before the correct interpretation was ever attempted. Measured on
+  // the corpus that produced 64 confidently wrong readings where there had
+  // been none. Trying the longest interpretation first means a full symbol is
+  // never pre-empted by a shorter one hiding within it.
+  //
+  // Structurally it is not a short EAN: no centre guard, all six digits in the
+  // left half using L and G, and a six-module end guard. The parity of those
+  // digits encodes the CHECK digit, the inverse of EAN-13 where parity encodes
+  // the first.
+  return decodeUpcE(runs, at, guardError, tolerance);
 };
 
 /**
@@ -304,8 +418,11 @@ export const decodeRow = (
   tolerance = 0.7
 ): LinearMatch | null => {
   const runs = runsInRow(matrix, y);
-  // 3 + 24 + 5 + 24 + 3 for an EAN-8, the shortest thing worth trying.
-  if (runs.length < 59) return null;
+  // 3 + 24 + 6 for a UPC-E, which is the shortest of the family: six digits of
+  // four runs each between a three-run start guard and a six-run end. An EAN-8
+  // needs 59 and an EAN-13 more, but those are checked as they are attempted
+  // rather than gating the whole row.
+  if (runs.length < MINIMUM_RUNS) return null;
 
   let best: LinearMatch | null = null;
 
@@ -319,7 +436,7 @@ export const decodeRow = (
           start: matrix.width - run.start - run.length
         }));
 
-    for (let at = 0; at + 59 <= ordered.length; at++) {
+    for (let at = 0; at + MINIMUM_RUNS <= ordered.length; at++) {
       if (!ordered[at].dark) continue;
 
       const match = decodeFrom(ordered, at, tolerance);

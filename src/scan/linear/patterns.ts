@@ -72,6 +72,70 @@ export const PARITY_PATTERNS: ReadonlyArray<readonly number[]> = [
 ];
 
 /**
+ * UPC-E parity, indexed by check digit, for number system 0.
+ *
+ * The mirror of {@link PARITY_PATTERNS}, and it is worth being clear about the
+ * inversion. An EAN-13 encodes its FIRST digit in how the left half is
+ * encoded; a UPC-E encodes its CHECK digit that way, and carries no number
+ * system digit in the bars at all. So the same trick recovers a different
+ * piece of information, and reading one as the other yields a plausible number
+ * that is wrong.
+ *
+ * `1` means G (even parity), `0` means L (odd).
+ */
+export const UPC_E_PARITY: ReadonlyArray<readonly number[]> = [
+  [1, 1, 1, 0, 0, 0],
+  [1, 1, 0, 1, 0, 0],
+  [1, 1, 0, 0, 1, 0],
+  [1, 1, 0, 0, 0, 1],
+  [1, 0, 1, 1, 0, 0],
+  [1, 0, 0, 1, 1, 0],
+  [1, 0, 0, 0, 1, 1],
+  [1, 0, 1, 0, 1, 0],
+  [1, 0, 1, 0, 0, 1],
+  [1, 0, 0, 1, 0, 1]
+];
+
+/**
+ * Expand a UPC-E's six digits into the twelve of the UPC-A it stands for.
+ *
+ * A UPC-E is not a short barcode — it is a full GTIN-12 with its zeros
+ * squeezed out, and the LAST digit says where they were. That makes expansion
+ * the only correct way to report one: a caller looking a product up needs the
+ * twelve digits printed under an equivalent UPC-A, not the six that happen to
+ * be printed under this one.
+ *
+ * `system` is the leading digit, which the bars do not carry — it is 0 or 1
+ * and is recovered from which parity table matched.
+ */
+export const expandUpcE = (
+  digits: readonly number[],
+  system: number
+): number[] | null => {
+  if (digits.length !== 6) return null;
+
+  const [a, b, c, d, e, last] = digits;
+
+  // Each case says which digits are manufacturer, which are product, and how
+  // many zeros were removed from between them.
+  const middle =
+    last <= 2
+      ? // MMPPP0-2: the last digit becomes the third manufacturer digit.
+        [a, b, last, 0, 0, 0, 0, c, d, e]
+      : last === 3
+        ? // MMMPP3
+          [a, b, c, 0, 0, 0, 0, 0, d, e]
+        : last === 4
+          ? // MMMMP4
+            [a, b, c, d, 0, 0, 0, 0, 0, e]
+          : // MMMMM5-9: the last digit is itself the final product digit.
+            [a, b, c, d, e, 0, 0, 0, 0, last];
+
+  const withoutCheck = [system, ...middle];
+  return [...withoutCheck, checkDigit(withoutCheck)];
+};
+
+/**
  * The check digit: weights of 3 and 1 alternating from the right, and whatever
  * makes the total a multiple of ten.
  *

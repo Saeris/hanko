@@ -4,6 +4,8 @@ import { createLinearDecoder } from "../scan/linear/decoder.js";
 import { describeGtin } from "../scan/linear/gtin.js";
 import {
   G_CODES,
+  UPC_E_PARITY,
+  expandUpcE,
   L_CODES,
   PARITY_PATTERNS,
   R_CODES,
@@ -196,6 +198,79 @@ describe(`linear barcodes`, () => {
       // by a company code, so reading the leading digits as a block would
       // invent an answer. Better to say nothing than to say something wrong.
       expect(describeGtin(`12345670`)).toBeNull();
+    });
+  });
+
+  describe(`uPC-E`, () => {
+    /** Render a UPC-E: start guard, six digits, six-module end guard. */
+    const renderUpcE = (
+      digits: readonly number[],
+      check: number,
+      scale = 3
+    ): GrayImage => {
+      const modules: number[] = [];
+      const push = (pattern: readonly number[]): void => {
+        for (const bit of pattern) modules.push(bit);
+      };
+
+      push([1, 0, 1]);
+      const parity = UPC_E_PARITY[check];
+      for (const [index, digit] of digits.entries()) {
+        push(parity[index] === 1 ? G_CODES[digit] : L_CODES[digit]);
+      }
+      push([0, 1, 0, 1, 0, 1]);
+
+      const quiet = 9;
+      const width = (modules.length + quiet * 2) * scale;
+      const height = 60;
+      const data = new Uint8ClampedArray(width * height).fill(255);
+
+      for (let y = 0; y < height; y++) {
+        for (const [index, module] of modules.entries()) {
+          if (module === 0) continue;
+          for (let s = 0; s < scale; s++) {
+            data[y * width + (quiet + index) * scale + s] = 0;
+          }
+        }
+      }
+
+      return { data, width, height };
+    };
+
+    it(`expands the six digits into the twelve they stand for`, () => {
+      // WHY: a UPC-E is not a short barcode, it is a full GTIN-12 with its
+      // zeros squeezed out, and the LAST digit says where they were. Reporting
+      // the six printed digits would miss every product database lookup.
+      expect(expandUpcE([1, 2, 3, 4, 5, 6], 0)?.join(``)).toBe(`012345000065`);
+    });
+
+    it(`reads one, and reports the expanded number`, () => {
+      // WHY: end to end. The parity of the six digits encodes the CHECK digit
+      // here — the inverse of EAN-13, where it encodes the first — so a
+      // decoder that reused the EAN path would produce a plausible wrong
+      // number rather than failing.
+      const expanded = expandUpcE([1, 2, 3, 4, 5, 6], 0)!;
+      const image = renderUpcE([1, 2, 3, 4, 5, 6], expanded[11]);
+
+      const symbol = createLinearDecoder({
+        timeBudgetMs: 0,
+        formats: [`upc_e`]
+      }).decode(image);
+
+      expect(symbol?.format).toBe(`upc_e`);
+      expect(symbol?.value).toBe(`012345000065`);
+    });
+
+    it(`is off by default`, () => {
+      // WHY: this is a measurement, not a preference. A UPC-E is six digits
+      // plus a parity pattern and its 35 runs fit inside a full EAN-13's 59,
+      // so enabled by default it produced 14 false positives on a corpus
+      // containing no UPC-E at all — every misread in that run. It has to be
+      // asked for, and a caller that changes this should know why.
+      const expanded = expandUpcE([1, 2, 3, 4, 5, 6], 0)!;
+      const image = renderUpcE([1, 2, 3, 4, 5, 6], expanded[11]);
+
+      expect(createLinearDecoder({ timeBudgetMs: 0 }).decode(image)).toBeNull();
     });
   });
 });

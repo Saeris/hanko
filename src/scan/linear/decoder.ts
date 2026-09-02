@@ -60,12 +60,25 @@ export interface LinearDecoderOptions {
   rows?: number;
 
   /**
-   * Which lengths to accept.
+   * Which symbologies to accept.
    *
-   * `ean_8` is a genuine source of false positives: eight digits is a short
-   * enough sequence that ordinary artwork occasionally satisfies both the
-   * pattern match and the check digit. A caller scanning bottles — which carry
-   * UPC-A or EAN-13 — can exclude it and remove that failure mode outright.
+   * Defaults to the three that can be detected blind — `ean_13`, `upc_a` and
+   * `ean_8`. **`upc_e` is not among them and must be asked for**, which is a
+   * measurement rather than a preference.
+   *
+   * A UPC-E is six digits plus a parity pattern, and its 35 runs fit inside a
+   * full EAN-13's 59, so it can match a fragment of a longer symbol. Enabled
+   * by default it produced **14 false positives** on a corpus containing no
+   * UPC-E at all — every misread in the run — while contributing nothing to
+   * that corpus's recognition, because there was none there to find.
+   *
+   * Ask for it where the packaging warrants it: a bottle neck, a small carton,
+   * anywhere a full UPC-A does not fit. It reads those correctly, and the
+   * false positives are the price of guessing rather than of the format.
+   *
+   * `ean_8` carries a milder version of the same problem — eight digits is a
+   * short enough sequence that artwork occasionally satisfies both the pattern
+   * and the check digit — and is held to twice the agreement to compensate.
    */
   formats?: readonly BarcodeFormat[];
 
@@ -94,13 +107,12 @@ export interface LinearDecoderOptions {
   agreement?: number;
 }
 
-/** The default set: everything this decoder can produce. */
-const ALL_FORMATS: readonly BarcodeFormat[] = [
-  `ean_13`,
-  `ean_8`,
-  `upc_a`,
-  `upc_e`
-];
+/**
+ * The default set: what can be detected blind without guessing.
+ *
+ * `upc_e` is deliberately absent — see {@link LinearDecoderOptions.formats}.
+ */
+const DEFAULT_FORMATS: readonly BarcodeFormat[] = [`ean_13`, `ean_8`, `upc_a`];
 
 /**
  * Turn columns into rows.
@@ -131,8 +143,17 @@ const transpose = (matrix: BitMatrix): BitMatrix => {
  * whose first digit is zero — so this is a matter of reporting the shape the
  * caller will match on rather than of recognising anything further.
  */
-const formatOf = (digits: readonly number[]): BarcodeFormat =>
-  digits.length === 8 ? `ean_8` : digits[0] === 0 ? `upc_a` : `ean_13`;
+const formatOf = (
+  digits: readonly number[],
+  compressed: boolean
+): BarcodeFormat =>
+  compressed
+    ? `upc_e`
+    : digits.length === 8
+      ? `ean_8`
+      : digits[0] === 0
+        ? `upc_a`
+        : `ean_13`;
 
 /**
  * The payload, as the digits a caller would look up.
@@ -145,6 +166,9 @@ const formatOf = (digits: readonly number[]): BarcodeFormat =>
  */
 const valueOf = (digits: readonly number[], format: BarcodeFormat): string => {
   const text = digits.join(``);
+  // Only UPC-A needs trimming: it is decoded as the thirteen-digit EAN-13 it
+  // technically is. `expandUpcE` already produces exactly twelve, so trimming
+  // that too would drop a significant leading zero.
   return format === `upc_a` ? text.slice(1) : text;
 };
 
@@ -157,7 +181,7 @@ const valueOf = (digits: readonly number[], format: BarcodeFormat): string => {
 export const createLinearDecoder = ({
   timeBudgetMs = 120,
   rows = 256,
-  formats = ALL_FORMATS,
+  formats = DEFAULT_FORMATS,
   agreement = 4
 }: LinearDecoderOptions = {}): {
   decode(image: GrayImage): DecodedSymbol | null;
@@ -225,7 +249,15 @@ export const createLinearDecoder = ({
         // — which contains no linear barcodes at all — has been an EAN-8, both
         // before the agreement guard existed and again when transposing gave
         // the sweep a second set of runs to find coincidences in.
-        const needed = match.digits.length === 8 ? agreement * 2 : agreement;
+        // EAN-8 and UPC-E are both held to a higher bar than a full EAN-13.
+        //
+        // Both are weaker claims. An EAN-8 is eight digits against thirteen,
+        // and a UPC-E is six plus a parity pattern — and a UPC-E's 35 runs fit
+        // inside a real EAN-13's 59, so it can match a fragment of a longer
+        // symbol. Trying the longest interpretation first handles most of
+        // that; requiring more corroboration handles the rest.
+        const weak = match.digits.length === 8 || match.compressed;
+        const needed = weak ? agreement * 2 : agreement;
         if (entry.count >= needed) return entry.match;
       }
     }
@@ -273,7 +305,7 @@ export const createLinearDecoder = ({
         const match = sweep(prepare(), spent);
         if (match === null) continue;
 
-        const format = formatOf(match.digits);
+        const format = formatOf(match.digits, match.compressed);
         if (!wanted.has(format)) continue;
 
         return {

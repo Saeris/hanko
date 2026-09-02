@@ -124,6 +124,13 @@ import Base from "../layouts/Base.astro";
           say(`FORMAT: ${symbol.format}`, `ok`);
           say(`VALUE: ${symbol.value}`, `ok`);
 
+          // A UPC-E prints six digits and decodes to twelve. Without saying
+          // so, someone comparing this screen against the bottle in their
+          // hand reads a mismatch as a bug rather than as the expansion it is.
+          if (symbol.format === `upc_e`) {
+            say(`expanded from the six digits printed on the packaging`);
+          }
+
           // What the leading digits are allocated for, where that is known.
           // A book, a magazine and a shop's own weighed-produce label all look
           // like ordinary products until the prefix is read.
