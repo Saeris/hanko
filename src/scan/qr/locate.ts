@@ -496,10 +496,19 @@ export const findFinderBlobs = (matrix: BitMatrix): FinderPattern[] => {
       const stack = [start];
       seen[start] = 1;
 
+      // Unrolled, with the neighbour offsets written out.
+      //
+      // Profiled under viewfinder load — a symbol present, a budget enforced,
+      // frame after frame — this is the hottest function in the decoder at 22%
+      // of JS time, where it does not reach the top three for a still or an
+      // empty frame. The inner loop ran a division and a modulo per popped
+      // pixel to recover coordinates from an index, and allocated a
+      // four-element array of pairs to iterate the neighbours; on a blob of
+      // tens of thousands of pixels that is the whole cost.
       while (stack.length > 0) {
         const index = stack.pop()!;
-        const cy = Math.floor(index / width);
-        const cx = index % width;
+        const cy = (index / width) | 0;
+        const cx = index - cy * width;
         area++;
 
         if (cx < minX) minX = cx;
@@ -508,17 +517,29 @@ export const findFinderBlobs = (matrix: BitMatrix): FinderPattern[] => {
         if (cy > maxY) maxY = cy;
         if (area > maxArea) break;
 
-        for (const [dx, dy] of [
-          [1, 0],
-          [-1, 0],
-          [0, 1],
-          [0, -1]
-        ] as const) {
-          const nx = cx + dx;
-          const ny = cy + dy;
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-
-          const next = ny * width + nx;
+        if (cx + 1 < width) {
+          const next = index + 1;
+          if (seen[next] === 0 && bits[next] === 1) {
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+        if (cx > 0) {
+          const next = index - 1;
+          if (seen[next] === 0 && bits[next] === 1) {
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+        if (cy + 1 < height) {
+          const next = index + width;
+          if (seen[next] === 0 && bits[next] === 1) {
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+        if (cy > 0) {
+          const next = index - width;
           if (seen[next] === 0 && bits[next] === 1) {
             seen[next] = 1;
             stack.push(next);

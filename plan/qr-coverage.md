@@ -528,9 +528,9 @@ still pays for them.
 STARTED and not how long a decode runs. Measured on 1280x720 frames at a 120ms
 budget:
 
-| | median | p90 | max | over budget |
-| --- | ------ | --- | --- | ----------- |
-| | 190ms  | 562ms | 1526ms | 40 of 71 |
+|     | median | p90   | max    | over budget |
+| --- | ------ | ----- | ------ | ----------- |
+|     | 190ms  | 562ms | 1526ms | 40 of 71    |
 
 One `attempt` is four binarization passes across two polarities, each a full
 binarize, scan and sample, and the ladder calls `attempt` a dozen times. None
