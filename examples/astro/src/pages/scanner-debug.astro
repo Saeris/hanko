@@ -62,10 +62,12 @@ import Base from "../layouts/Base.astro";
   }
 
   try {
-    const [{ createWorkerScanner }, { openCamera }] = await Promise.all([
-      import(`@saeris/hanko/scan`),
-      import(`../lib/camera`)
-    ]);
+    const [{ createWorkerScanner }, { describeGtin }, { openCamera }] =
+      await Promise.all([
+        import(`@saeris/hanko/scan`),
+        import(`@saeris/hanko/scan/linear`),
+        import(`../lib/camera`)
+      ]);
     say(`decoder imported`, `ok`);
 
     const camera = await openCamera(video);
@@ -83,6 +85,9 @@ import Base from "../layouts/Base.astro";
     const scanner = createWorkerScanner(worker);
     say(`worker scanner constructed`, `ok`);
 
+    // Distinct readings this session, so repeatedly decoding the same label
+    // does not look like progress.
+    const seen = new Set<string>();
     let attempts = 0;
     let dropped = 0;
     let slowest = 0;
@@ -112,10 +117,29 @@ import Base from "../layouts/Base.astro";
         }
 
         if (symbol !== null) {
-          say(`DECODED: ${symbol.value}`, `ok`);
-          scanner.close();
-          camera.stop();
-          return;
+          // Both parts, separately. The value alone does not say whether a
+          // twelve-digit number is a UPC-A or the front of something longer
+          // that was misread, and out in a shop that is the difference between
+          // a lookup and a wild goose chase.
+          say(`FORMAT: ${symbol.format}`, `ok`);
+          say(`VALUE: ${symbol.value}`, `ok`);
+
+          // What the leading digits are allocated for, where that is known.
+          // A book, a magazine and a shop's own weighed-produce label all look
+          // like ordinary products until the prefix is read.
+          const prefix = describeGtin(symbol.value);
+          if (symbol.format !== `qr_code` && prefix !== null) {
+            say(`PREFIX: ${prefix.label}`);
+            if (prefix.note !== undefined) say(prefix.note);
+          }
+
+          // Kept running rather than stopping, so a shelf can be worked
+          // through without reloading between products — which is the whole
+          // point of carrying this page around.
+          say(`—— still scanning ——`);
+          seen.add(`${symbol.format}:${symbol.value}`);
+          say(`${seen.size} distinct code(s) this session`);
+          continue;
         }
 
         await new Promise((resolve) => requestAnimationFrame(resolve));

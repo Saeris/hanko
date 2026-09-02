@@ -12,3 +12,5 @@ export type { LinearDecoderOptions } from "./decoder.js";
 export { decodeRow, runsInRow } from "./scanline.js";
 export type { LinearMatch } from "./scanline.js";
 export { checkDigit, isValid } from "./patterns.js";
+export { describeGtin } from "./gtin.js";
+export type { GtinPrefix } from "./gtin.js";

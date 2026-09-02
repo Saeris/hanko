@@ -234,6 +234,40 @@ symbol?.value; // "036000291452" — twelve digits for a UPC-A, as printed
 A UPC-A comes back as twelve digits rather than thirteen with a leading zero,
 because that is what is on the package and what a product database is keyed by.
 
+### What it covers
+
+More than the name suggests, because several things are EAN-13 underneath:
+
+| On the shelf             | Reads as | Note                                  |
+| ------------------------ | -------- | ------------------------------------- |
+| Groceries, bottles, cans | `ean_13` |                                       |
+| US and Canadian retail   | `upc_a`  | reported as the twelve digits printed |
+| Japanese products (JAN)  | `ean_13` | JAN _is_ EAN; prefixes 45 and 49      |
+| Books (ISBN-13)          | `ean_13` | prefix 978/979                        |
+| Magazines (ISSN)         | `ean_13` | prefix 977                            |
+| Small items              | `ean_8`  |                                       |
+
+Not covered: **Code 128** and **ITF-14**, which are genuinely different
+symbologies. ITF-14 marks shipping cases rather than the packaging a person
+photographs.
+
+`describeGtin` names what the leading digits are allocated for, which
+distinguishes a book from a bottle from a shop's own weighed-produce label —
+the last of which will never match a product database, however long a caller
+waits for it to.
+
+```ts
+import { describeGtin } from "@saeris/hanko/scan/linear";
+
+describeGtin(`4901234567894`); // { label: "GS1 Japan" }
+describeGtin(`9784873115658`); // { label: "Book (ISBN)", note: … }
+describeGtin(`2001234567893`); // { label: "In-store", note: … }
+```
+
+A GS1 prefix names the organisation a company registered with, **not** where
+anything was made — a company can license a prefix in one country and
+manufacture in another.
+
 ### Why it asks two rows to agree
 
 This family carries **no error correction**. A QR symbol can lose a third of

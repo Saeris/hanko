@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { blur } from "../scan/binarize.js";
 import { createLinearDecoder } from "../scan/linear/decoder.js";
+import { describeGtin } from "../scan/linear/gtin.js";
 import {
   G_CODES,
   L_CODES,
@@ -167,5 +168,34 @@ describe(`linear barcodes`, () => {
     // others, which is the kind of bug that only shows on EAN-8.
     expect(checkDigit([5, 9, 0, 1, 2, 3, 4, 1, 2, 3, 4, 5])).toBe(7);
     expect(checkDigit([4, 0, 0, 6, 3, 8, 1, 3, 3, 3, 9, 3])).toBe(1);
+  });
+
+  describe(`prefixes`, () => {
+    it(`names the blocks that mean something structurally different`, () => {
+      // WHY: a book, a magazine and a shop's own weighed-produce label are all
+      // EAN-13s and all look alike as digits. The in-store one is the case
+      // that matters most — it will never match a product database, and
+      // without the prefix a caller has no way to know that rather than
+      // assuming the lookup failed.
+      expect(describeGtin(`9784873115658`)?.label).toBe(`Book (ISBN)`);
+      expect(describeGtin(`9771234567003`)?.label).toBe(`Periodical (ISSN)`);
+      expect(describeGtin(`2001234567893`)?.label).toBe(`In-store`);
+      expect(describeGtin(`4901234567894`)?.label).toBe(`GS1 Japan`);
+    });
+
+    it(`pads a UPC-A before matching`, () => {
+      // WHY: prefixes are allocated in the thirteen-digit space, but a UPC-A
+      // is reported as the twelve printed on the package. Matching the printed
+      // form would read `03` as the block, putting every US product in the
+      // wrong one — or in France's, which starts at 30.
+      expect(describeGtin(`036000291452`)?.label).toBe(`GS1 US / Canada`);
+    });
+
+    it(`says nothing about an EAN-8`, () => {
+      // WHY: eight digits are a compressed allocation, not a prefix followed
+      // by a company code, so reading the leading digits as a block would
+      // invent an answer. Better to say nothing than to say something wrong.
+      expect(describeGtin(`12345670`)).toBeNull();
+    });
   });
 });

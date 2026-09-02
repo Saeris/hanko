@@ -30,8 +30,14 @@ import Base from "../layouts/Base.astro";
       <h2>Decoded</h2>
 
       <dl>
+        <dt>Type</dt>
+        <dd><output id="format"></output></dd>
+
         <dt>Raw</dt>
         <dd><output id="raw"></output></dd>
+
+        <dt id="meaning-label" hidden>Prefix</dt>
+        <dd id="meaning" hidden></dd>
 
         <dt>As a link</dt>
         <dd id="link-row"><span id="not-a-link">not a URL</span></dd>
@@ -122,6 +128,7 @@ import Base from "../layouts/Base.astro";
 
 <script>
   import { createWorkerScanner } from "@saeris/hanko/scan";
+  import { describeGtin } from "@saeris/hanko/scan/linear";
   import { openCamera } from "../lib/camera";
 
   const el = <T extends HTMLElement>(id: string): T =>
@@ -131,6 +138,9 @@ import Base from "../layouts/Base.astro";
   const status = el(`status`);
   const result = el(`result`);
   const raw = el<HTMLOutputElement>(`raw`);
+  const formatOut = el<HTMLOutputElement>(`format`);
+  const meaning = el(`meaning`);
+  const meaningLabel = el(`meaning-label`);
   const linkRow = el(`link-row`);
   const notALink = el(`not-a-link`);
   const statFrames = el(`stat-frames`);
@@ -157,8 +167,43 @@ import Base from "../layouts/Base.astro";
     }
   };
 
-  const show = (value: string): void => {
+  /**
+   * How each symbology is named on screen.
+   *
+   * The library reports BarcodeDetector's spelling, which is right for code
+   * and wrong for a person squinting at a phone — `upc_a` means nothing until
+   * it says UPC-A. The parenthetical says which of the family it is, because
+   * that is the part that decides whether a lookup expects twelve digits or
+   * thirteen.
+   */
+  const FORMAT_NAMES: Record<string, string> = {
+    qr_code: `QR code`,
+    ean_13: `EAN-13 (GTIN-13)`,
+    ean_8: `EAN-8 (GTIN-8)`,
+    upc_a: `UPC-A (GTIN-12)`,
+    upc_e: `UPC-E`
+  };
+
+  const show = (value: string, format: string): void => {
+    formatOut.textContent = FORMAT_NAMES[format] ?? format;
     raw.textContent = value;
+
+    // What the leading digits mean, when anything is known about them. Books,
+    // periodicals and a shop's own in-store codes all look like ordinary
+    // products until the prefix is read, and an in-store code will never match
+    // a product database however long someone waits for it to.
+    const prefix = describeGtin(value);
+    const hasPrefix = format !== `qr_code` && prefix !== null;
+
+    meaning.hidden = !hasPrefix;
+    meaningLabel.hidden = !hasPrefix;
+
+    if (prefix !== null) {
+      meaning.textContent =
+        prefix.note === undefined
+          ? prefix.label
+          : `${prefix.label} — ${prefix.note}`;
+    }
 
     const url = asLink(value);
     linkRow.replaceChildren();
@@ -247,7 +292,7 @@ import Base from "../layouts/Base.astro";
         if (elapsed > 1) statDecode.textContent = `${elapsed.toFixed(0)}ms`;
 
         if (symbol !== null) {
-          show(symbol.value);
+          show(symbol.value, symbol.format);
           stop();
           return;
         }
