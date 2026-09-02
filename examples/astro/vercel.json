@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "yarn astro build",
-  "outputDirectory": ".vercel/output",
   "framework": "astro",
-  "installCommand": "yarn install --immutable"
+  "installCommand": "yarn install --immutable",
+  "_comment": "The library is built before the example, from the repo root. The example depends on it as `link:../..` and resolves it through the `exports` map, which points at `dist/` — so a clean checkout cannot resolve `@saeris/hanko` at all until `vp pack` has run. This is the same reason CI builds before it checks.",
+  "buildCommand": "cd ../.. && yarn vp pack && cd examples/astro && yarn astro build",
+  "outputDirectory": ".vercel/output"
 }
