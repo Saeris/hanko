@@ -337,10 +337,16 @@ export const close = (matrix: BitMatrix): BitMatrix => {
   //
   // Worth doing: measured with deoptkit, this function was 54 of 327 JS ticks
   // — 17% of the decoder's CPU — as the LAST rung in the retry ladder.
-  const horizontal = new Uint8Array(width * height);
-  const dilated = new Uint8Array(width * height);
-  const vertical = new Uint8Array(width * height);
+  // Two buffers, not four. The four sweeps read one and write the other in
+  // turn, so they can ping-pong: on a 1280x720 frame the old form allocated
+  // 3.7MB per call, and this runs on half of every ladder rung's passes.
+  // Profiled under viewfinder load it was 14% of JS time with the garbage
+  // collector visible behind it.
+  const scratch = new Uint8Array(width * height);
   const output = new Uint8Array(width * height);
+  const horizontal = scratch;
+  const dilated = output;
+  const vertical = scratch;
 
   // Dilate: a pixel is set if any of its three horizontal neighbours is.
   for (let y = 0; y < height; y++) {
