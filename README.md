@@ -275,20 +275,31 @@ taken with camera phones, split by whether the camera had autofocus:
 
 | Subset            | Images | Correct   | Misread |
 | ----------------- | ------ | --------- | ------- |
-| With autofocus    | 215    | **89.3%** | 0       |
-| Without autofocus | 215    | **23.3%** | 0       |
-| Total             | 430    | **56.3%** | **0**   |
+| With autofocus    | 215    | **91.6%** | 0       |
+| Without autofocus | 215    | **26.0%** | 0       |
+| Total             | 430    | **58.8%** | **0**   |
 
 The misread column is the one to watch. A QR symbol reconstructs or it does
 not, so "read" and "read correctly" are one number; this family has no
 correction, so they are two, and a confident wrong answer is far worse than
 none.
 
-The autofocus split is the whole story: a barcode that is in focus reads nine
-times in ten, and one that is not reads two in ten. Fixing that is a matter of
-sampling more rows rather than processing any one row harder — raising the row
-count from 24 to 64 moved the blurry half from 18% to 26%, while blurring,
-downscaling and enlarging each moved it by nothing.
+The autofocus split is the whole story: a barcode in focus reads nine times in
+ten, one that is not reads a quarter of the time. The lever is **sampling more
+rows**, not processing any one row harder — the blurry half runs 18% at 24
+rows, 26% at 64 and 35% at 256, while blurring, downscaling and enlarging each
+moved it by nothing. ZXing reaches the same conclusion from the other side:
+its `tryHarder` mode drops the row step from height/32 to height/256.
+
+Worth knowing before turning the knobs: loosening the pattern tolerance buys
+recognition and pays in **misreads**. At 0.85 it reads more and returns 13
+confidently wrong numbers across a sample; at 0.7, one. The defaults go the
+other way — four rows must agree rather than two, costing about a point on
+focused images and three on blurry ones, and removing every misread.
+
+For scale: the authors of this corpus needed a neural network to read its
+no-autofocus half at all, having found the open-source libraries of the day
+could not. 26% classically is not obviously far from what the approach allows.
 
 ```bash
 yarn corpus:barcodes  # fetch the corpus (~226 MB, CC BY 3.0)

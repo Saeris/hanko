@@ -14,7 +14,12 @@
  */
 
 import { binarize, binarizeAt, binarizeGlobal } from "../binarize.js";
-import type { BarcodeFormat, DecodedSymbol, GrayImage } from "../types.js";
+import type {
+  BarcodeFormat,
+  BitMatrix,
+  DecodedSymbol,
+  GrayImage
+} from "../types.js";
 import { decodeRow, type LinearMatch } from "./scanline.js";
 
 /** Options for {@link createLinearDecoder}. */
@@ -35,13 +40,17 @@ export interface LinearDecoderOptions {
    * almost the same signal. Rows are spread evenly rather than clustered,
    * since a label can sit anywhere in frame.
    *
-   * Sixty-four, which is more than it sounds and is where the recognition is.
-   * Measured on the ArTe-Lab corpus's no-autofocus half — blurry hand-held
-   * phone photographs, the hard case — raising this from 24 took recognition
-   * from 18% to 26%, while blurring, downscaling and enlarging each moved it
-   * by nothing. A blurry barcode has only a handful of rows where the runs
-   * resolve cleanly, so the answer is to look at more of them rather than to
-   * process any one of them harder.
+   * Two hundred and fifty-six, which is where the curve flattens. Measured on
+   * the ArTe-Lab corpus's no-autofocus half — blurry hand-held photographs,
+   * the hard case — recognition runs 18% at 24 rows, 26% at 64, 35% at 256
+   * and 36% at 512, so the last doubling buys a point for half again the time.
+   * Blurring, downscaling and enlarging each moved it by nothing.
+   *
+   * A blurry barcode has only a handful of rows where the runs resolve
+   * cleanly, so the answer is to look at more of them rather than to process
+   * any one of them harder. ZXing reaches the same conclusion from the other
+   * direction: its `tryHarder` mode drops the row step from height/32 to
+   * height/256.
    */
   rows?: number;
 
@@ -58,9 +67,24 @@ export interface LinearDecoderOptions {
   /**
    * How many rows must agree before a reading is returned.
    *
-   * Two by default. One is measurably unsafe — see the sweep below — and more
-   * than two costs recognition on a barcode photographed small or at an angle,
-   * where only a couple of rows cross it cleanly.
+   * Four by default, which is a deliberate trade of recognition for silence
+   * about what it is unsure of.
+   *
+   * Measured across the whole ArTe-Lab corpus, at 256 rows:
+   *
+   * | rows agreeing | correct (AF) | wrong | correct (no AF) | wrong |
+   * | ------------- | ------------ | ----- | --------------- | ----- |
+   * | 2             | 91.6%        | 2     | 28.8%           | 5     |
+   * | 3             | 91.2%        | 0     | 27.9%           | 2     |
+   * | 4             | 90.7%        | 0     | 26.0%           | 0     |
+   *
+   * So going from two to four costs about a point on focused images and three
+   * on blurry ones, and removes all seven misreads. That is the right way
+   * round for anything that looks a code up: a wrong GTIN sends someone to the
+   * wrong product with no sign anything went awry, while a scan that returns
+   * nothing just means pointing the camera again.
+   *
+   * Lower it only where a wrong answer is cheap.
    */
   agreement?: number;
 }
@@ -72,6 +96,28 @@ const ALL_FORMATS: readonly BarcodeFormat[] = [
   `upc_a`,
   `upc_e`
 ];
+
+/**
+ * Turn columns into rows.
+ *
+ * The scan only walks horizontally, so a barcode printed down the frame is
+ * invisible to it. Rotating the bits a quarter turn is cheaper than teaching
+ * the sweep to walk in two directions, and keeps the scanline code to the one
+ * case it is good at.
+ */
+const transpose = (matrix: BitMatrix): BitMatrix => {
+  const { width, height, bits } = matrix;
+  const out = new Uint8Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      out[x * height + (height - 1 - y)] = bits[row + x];
+    }
+  }
+
+  return { bits: out, width: height, height: width };
+};
 
 /**
  * Name the symbology from what was decoded.
@@ -105,9 +151,9 @@ const valueOf = (digits: readonly number[], format: BarcodeFormat): string => {
  */
 export const createLinearDecoder = ({
   timeBudgetMs = 120,
-  rows = 64,
+  rows = 256,
   formats = ALL_FORMATS,
-  agreement = 2
+  agreement = 4
 }: LinearDecoderOptions = {}): {
   decode(image: GrayImage): DecodedSymbol | null;
 } => {
@@ -165,7 +211,17 @@ export const createLinearDecoder = ({
         // Keep whichever row matched its patterns most cleanly, so the reported
         // bounds come from the best evidence rather than the first sighting.
         if (match.error < entry.match.error) entry.match = match;
-        if (entry.count >= agreement) return entry.match;
+
+        // EAN-8 is held to a higher bar than the thirteen-digit forms.
+        //
+        // Eight digits is a much weaker claim: fewer runs to match and the
+        // same one-in-ten check digit, so ordinary dense artwork satisfies it
+        // far more often. Every false positive measured against the QR corpus
+        // — which contains no linear barcodes at all — has been an EAN-8, both
+        // before the agreement guard existed and again when transposing gave
+        // the sweep a second set of runs to find coincidences in.
+        const needed = match.digits.length === 8 ? agreement * 2 : agreement;
+        if (entry.count >= needed) return entry.match;
       }
     }
 
@@ -187,7 +243,17 @@ export const createLinearDecoder = ({
         () => binarizeGlobal(image),
         () => binarizeAt(image, 100),
         () => binarizeAt(image, 140),
-        () => binarizeAt(image, 180)
+        () => binarizeAt(image, 180),
+        // Sideways, last. Someone photographing a bottle holds it whichever
+        // way is comfortable, and a barcode running down the frame has no
+        // horizontal row crossing all of it — transposing turns its columns
+        // into rows and the existing sweep does the rest.
+        //
+        // Worth 2 points on the corpus's focused half and nothing on the
+        // blurry one, which understates it: these are photographs taken to
+        // BE a barcode dataset, so they are almost all upright. A phone in a
+        // shop is not so tidy.
+        () => transpose(binarize(image))
       ];
 
       for (const prepare of passes) {
