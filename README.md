@@ -76,25 +76,135 @@ renders:
 | ZXing     | 31.87%      |
 | jsQR      | 24.8%       |
 
+### Decoding one image
+
 ```ts
 import { createQrDecoder, toGray } from "@saeris/hanko/scan";
 
 const decoder = createQrDecoder();
 const symbol = decoder.decode(toGray(rgba, width, height));
+
+symbol?.value; // the payload, or null if nothing was found
 ```
 
-For a camera, run it off the main thread — the retry ladder deliberately
-outruns its own time budget, so a synchronous decode stalls the preview on
-exactly the frames someone is lining up:
+### Scanning with a camera
+
+Three pieces: a worker holding the decoder, something to turn a camera into
+greyscale frames, and a loop between them.
+
+The worker is not optional. The retry ladder deliberately outruns its own time
+budget — the budget is checked between attempts, not inside them — so a
+synchronous decode stalls the preview on exactly the frames someone is lining
+up.
 
 ```ts
-import { createWorkerScanner } from "@saeris/hanko/scan";
+// decoder.worker.ts
+import { serveDecoder } from "@saeris/hanko/scan/worker";
 
-const scanner = createWorkerScanner(
-  new Worker(new URL("./decoder.ts", import.meta.url), { type: "module" })
-);
-const symbol = await scanner.scan(frame);
+// No time budget: a worker has no preview to block, so the ladder may run to
+// exhaustion. Worth roughly twenty points of recognition over the 120ms a
+// synchronous decode has to respect.
+serveDecoder(self, { timeBudgetMs: 0 });
 ```
+
+```ts
+// camera.ts
+export const openCamera = async (video: HTMLVideoElement) => {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    // A preference, not a guarantee — a laptop with one camera ignores it.
+    video: { facingMode: { ideal: `environment` } },
+    audio: false
+  });
+
+  video.srcObject = stream;
+  // Without this iOS opens the system player full-screen instead of playing
+  // inline, and there is no preview to aim with.
+  video.setAttribute(`playsinline`, ``);
+  await video.play();
+
+  const canvas = document.createElement(`canvas`);
+  // `willReadFrequently` matters: without it the browser keeps the canvas on
+  // the GPU and every `getImageData` is a synchronous readback, which is the
+  // most expensive thing in this loop.
+  const context = canvas.getContext(`2d`, { willReadFrequently: true })!;
+
+  return {
+    grab: () => {
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      // Zero before the first paint, and on iOS while the element is paused.
+      if (width === 0 || height === 0) return null;
+
+      canvas.width = width;
+      canvas.height = height;
+      context.drawImage(video, 0, 0);
+      const { data } = context.getImageData(0, 0, width, height);
+
+      // Converted here rather than in the worker: it quarters the bytes
+      // transferred per frame.
+      const grey = new Uint8ClampedArray(width * height);
+      for (let i = 0, p = 0; i < grey.length; i++, p += 4) {
+        grey[i] = (data[p] * 77 + data[p + 1] * 150 + data[p + 2] * 29) >> 8;
+      }
+
+      return { data: grey, width, height };
+    },
+
+    stop: () => {
+      for (const track of stream.getTracks()) track.stop();
+      video.srcObject = null;
+    }
+  };
+};
+```
+
+```ts
+// the loop
+import { createWorkerScanner } from "@saeris/hanko/scan";
+import { openCamera } from "./camera";
+
+const camera = await openCamera(document.querySelector(`video`)!);
+const scanner = createWorkerScanner(
+  new Worker(new URL("./decoder.worker.ts", import.meta.url), {
+    type: `module`
+  })
+);
+
+let scanning = true;
+
+while (scanning) {
+  const frame = camera.grab();
+
+  if (frame !== null) {
+    // Awaited one at a time on purpose. A camera produces frames faster than
+    // they decode, and `scan` drops anything offered while a decode is in
+    // flight rather than queueing it — the next frame is always a better
+    // input than a backlogged one.
+    const symbol = await scanner.scan(frame);
+
+    if (symbol !== null) {
+      console.log(symbol.value);
+      scanning = false;
+      break;
+    }
+  }
+
+  // Yield to the compositor. The decode happens on another thread, but this
+  // loop still runs on the main one.
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+scanner.close();
+camera.stop();
+```
+
+A scanned payload is untrusted input. If you turn one into a link, restrict it
+to `http:` and `https:` and show the raw text beside it — `new URL()` happily
+accepts `javascript:`.
+
+For a camera that should keep trying across frames rather than exhausting the
+ladder on one, `createProgressiveScanner` spends a small budget per frame and
+raises it while a symbol is in view.
 
 Coverage per condition, and the negative results behind it, live in
 [plan/qr-coverage.md](plan/qr-coverage.md). Both move often.
@@ -163,10 +273,16 @@ Codes follow the spec's worked example: 8 characters from a 20-consonant
 alphabet, shown as `WDJB-MJHT`. No vowels, so a code cannot spell a word; no
 digits, so there is no `0`/`O` or `1`/`l`/`I` to misread.
 
-## 🔧 The example
+## 🔧 Examples
 
-A working flow, and a scanner you can point at things, in
-[`examples/astro`](examples/astro).
+The whole sign-in flow, wired end to end, lives in
+[`examples/astro`](examples/astro) — three surfaces, a store, rate limiting and
+the confirmation challenge, with the framework-specific parts explained in
+[its README](examples/astro/README.md). That is the reference for building the
+flow; this README covers the pieces rather than the assembly.
+
+More are planned — Next.js first, mirroring the Astro one closely enough to
+diff, then other frameworks and UI stacks.
 
 | Route            | What it is                                                           |
 | ---------------- | -------------------------------------------------------------------- |
@@ -183,8 +299,8 @@ yarn demo        # builds the library, then serves the example
 yarn demo:share  # the same, over TLS so a phone can reach it
 ```
 
-A camera needs a secure context, so a bare LAN IP will not do — hence the TLS
-proxy. See [examples/astro/README.md](examples/astro/README.md).
+A camera needs a secure context, so a bare LAN IP will not do — `demo:share`
+puts a TLS proxy in front, which is what makes the phone half testable at all.
 
 ## 🧪 Checks
 

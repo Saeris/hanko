@@ -234,20 +234,22 @@ const typedUrl = grant?.verification_uri.replace(/^https?:\/\//u, ``) ?? ``;
         // whole screen rather than nudging a status line: the code and QR are
         // now stale, and leaving them up invites someone to scan a code that
         // will never resolve.
+        // Deliberately stays here rather than navigating anywhere.
+        //
+        // The device holds an ACCESS TOKEN, not a browser session: that is the
+        // whole point of the grant. `/account` authenticates from a cookie the
+        // device has never been issued, so sending it there lands on the
+        // sign-in page — which is correct for a protected route and useless
+        // for a device that just signed in.
+        //
+        // A real device would start rendering its own content with this token.
+        // Standing in for that, the screen says who it is and offers the
+        // dashboard as a LINK, for whoever is holding the phone.
         finish(
           `You're signed in`,
-          `Signed in as ${body.subject}. Opening your devices…`,
+          `Signed in as ${body.subject}. Manage this device from your phone at /account.`,
           `ok`
         );
-
-        // A real device would now start showing its own content. This demo's
-        // equivalent is the dashboard, so it goes there — delayed, so the
-        // confirmation is readable first rather than the screen appearing to
-        // glitch, and matching the delay `watchSession` already uses when it
-        // sends the device back for a fresh code.
-        setTimeout(() => {
-          window.location.href = `/account`;
-        }, 2500);
         // The device flow is over — polling the token endpoint again would be
         // wrong. But the SESSION can still be revoked from the account screen,
         // and a real app would discover that on its next API call. This screen

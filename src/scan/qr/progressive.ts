@@ -174,10 +174,19 @@ export interface WorkerScanner {
  */
 export const createWorkerScanner = (
   worker: {
-    // `ArrayBufferLike[]` rather than `Transferable[]`: this package compiles
-    // without the DOM lib on purpose, and a buffer is the only thing
-    // transferred here.
-    postMessage: (message: unknown, transfer?: ArrayBufferLike[]) => void;
+    // Declared as an overload pair, mirroring the DOM's own signature.
+    //
+    // This package compiles without the DOM lib on purpose, so the type is
+    // written out rather than referencing `Worker`. It has to be written out
+    // FAITHFULLY: the DOM declares postMessage as two overloads, one of which
+    // takes a REQUIRED transfer list. A single signature with an optional
+    // `transfer?` cannot match that — parameters are contravariant — so a real
+    // `new Worker(...)` fails to compile against it under `strict` while
+    // working perfectly at runtime, which is the worst kind of type error.
+    postMessage: {
+      (message: unknown, transfer: never[]): void;
+      (message: unknown, options?: unknown): void;
+    };
     addEventListener?: (
       type: string,
       listener: (event: { data: unknown }) => void
