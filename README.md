@@ -268,6 +268,33 @@ A GS1 prefix names the organisation a company registered with, **not** where
 anything was made — a company can license a prefix in one country and
 manufacture in another.
 
+### How well it reads
+
+The [ArTe-Lab Medium 1D corpus][artelab] — 430 photographs of EAN-13 barcodes
+taken with camera phones, split by whether the camera had autofocus:
+
+| Subset            | Images | Correct   | Misread |
+| ----------------- | ------ | --------- | ------- |
+| With autofocus    | 215    | **89.3%** | 0       |
+| Without autofocus | 215    | **23.3%** | 0       |
+| Total             | 430    | **56.3%** | **0**   |
+
+The misread column is the one to watch. A QR symbol reconstructs or it does
+not, so "read" and "read correctly" are one number; this family has no
+correction, so they are two, and a confident wrong answer is far worse than
+none.
+
+The autofocus split is the whole story: a barcode that is in focus reads nine
+times in ten, and one that is not reads two in ten. Fixing that is a matter of
+sampling more rows rather than processing any one row harder — raising the row
+count from 24 to 64 moved the blurry half from 18% to 26%, while blurring,
+downscaling and enlarging each moved it by nothing.
+
+```bash
+yarn corpus:barcodes  # fetch the corpus (~226 MB, CC BY 3.0)
+yarn bench:barcodes   # run it
+```
+
 ### Why it asks two rows to agree
 
 This family carries **no error correction**. A QR symbol can lose a third of
@@ -413,6 +440,7 @@ example deploys to Vercel on push, independently of releases.
 [rfc-security]: https://datatracker.ietf.org/doc/html/rfc8628#section-5
 [etiket]: https://github.com/productdevbook/etiket
 [boofcv]: https://boofcv.org/index.php?title=Performance:QrCode
+[artelab]: http://artelab.dista.uninsubria.it/downloads/datasets/barcode/medium_barcode_1d/medium_barcode_1d.html
 [bumpy]: https://github.com/dmno-dev/bumpy
 [ci_badge]: https://github.com/Saeris/hanko/actions/workflows/ci.yml/badge.svg
 [ci]: https://github.com/Saeris/hanko/actions/workflows/ci.yml

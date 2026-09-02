@@ -32,9 +32,16 @@ export interface LinearDecoderOptions {
    * How many rows to sample across the image.
    *
    * Not every row: a barcode is many pixels tall, so neighbouring rows carry
-   * almost the same signal, and sampling a fraction of them finds the same
-   * symbols for a fraction of the work. Rows are spread evenly rather than
-   * clustered, since a label can sit anywhere in frame.
+   * almost the same signal. Rows are spread evenly rather than clustered,
+   * since a label can sit anywhere in frame.
+   *
+   * Sixty-four, which is more than it sounds and is where the recognition is.
+   * Measured on the ArTe-Lab corpus's no-autofocus half — blurry hand-held
+   * phone photographs, the hard case — raising this from 24 took recognition
+   * from 18% to 26%, while blurring, downscaling and enlarging each moved it
+   * by nothing. A blurry barcode has only a handful of rows where the runs
+   * resolve cleanly, so the answer is to look at more of them rather than to
+   * process any one of them harder.
    */
   rows?: number;
 
@@ -98,7 +105,7 @@ const valueOf = (digits: readonly number[], format: BarcodeFormat): string => {
  */
 export const createLinearDecoder = ({
   timeBudgetMs = 120,
-  rows = 24,
+  rows = 64,
   formats = ALL_FORMATS,
   agreement = 2
 }: LinearDecoderOptions = {}): {

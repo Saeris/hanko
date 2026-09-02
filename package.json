@@ -111,10 +111,12 @@
   "scripts": {
     "bench": "node bench/decode.mjs",
     "bench:corpus": "node bench/corpus.mjs",
+    "bench:barcodes": "node bench/barcodes.mjs",
     "build": "vp pack",
     "check": "vp check",
     "ci": "vp pack && vp check && vp test",
     "corpus": "node scripts/fetch-corpus.mjs",
+    "corpus:barcodes": "node scripts/fetch-barcodes.mjs",
     "demo": "vp pack && yarn workspace @saeris/hanko-example-astro run dev",
     "demo:share": "vp pack && yarn workspace @saeris/hanko-example-astro run share",
     "format": "vp check --fix",
