@@ -154,6 +154,57 @@ export const closeGray = (image: GrayImage, radius = 1): GrayImage => {
   return { data: output, width, height };
 };
 
+/**
+ * Average each pixel with its neighbours ABOVE and BELOW, and nothing else.
+ *
+ * For linear barcodes, where it is the one filter that reduces noise without
+ * damaging the signal. A barcode is constant down its height by construction,
+ * so averaging vertically is averaging repeated measurements of the same bar —
+ * noise cancels and the edges stay exactly where they were. Blurring in both
+ * directions instead smears the bars into each other, which is why the
+ * ordinary blur measured as no help at all here.
+ *
+ * Radius 3 by default. Measured on the ArTe-Lab corpus's no-autofocus half,
+ * radii 3 and 7 both take recognition from 32% to 35%, 15 gives it back, and
+ * 31 costs 4 points — because a barcode photographed at a slight angle is NOT
+ * constant vertically, so a tall window averages across the slope.
+ */
+export const averageColumns = (image: GrayImage, radius = 3): GrayImage => {
+  if (radius < 1) return image;
+
+  const { width, height, data } = image;
+  const output = new Uint8ClampedArray(width * height);
+
+  // Running sums down each column: the same O(1)-per-pixel trick `blur` uses,
+  // which matters because this runs on every rung that wants it.
+  for (let x = 0; x < width; x++) {
+    let sum = 0;
+    let count = 0;
+
+    for (let y = 0; y <= radius && y < height; y++) {
+      sum += data[y * width + x];
+      count++;
+    }
+
+    for (let y = 0; y < height; y++) {
+      output[y * width + x] = sum / count;
+
+      const leaving = y - radius;
+      if (leaving >= 0) {
+        sum -= data[leaving * width + x];
+        count--;
+      }
+      const entering = y + radius + 1;
+      if (entering < height) {
+        sum += data[entering * width + x];
+        count++;
+      }
+    }
+  }
+
+  return { data: output, width, height };
+};
+
 export const crop = (
   image: GrayImage,
   left: number,

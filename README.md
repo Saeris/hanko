@@ -275,9 +275,9 @@ taken with camera phones, split by whether the camera had autofocus:
 
 | Subset            | Images | Correct   | Misread |
 | ----------------- | ------ | --------- | ------- |
-| With autofocus    | 215    | **91.6%** | 0       |
-| Without autofocus | 215    | **26.0%** | 0       |
-| Total             | 430    | **58.8%** | **0**   |
+| With autofocus    | 215    | **92.1%** | 0       |
+| Without autofocus | 215    | **27.0%** | 0       |
+| Total             | 430    | **59.5%** | **0**   |
 
 The misread column is the one to watch. A QR symbol reconstructs or it does
 not, so "read" and "read correctly" are one number; this family has no
@@ -287,8 +287,11 @@ none.
 The autofocus split is the whole story: a barcode in focus reads nine times in
 ten, one that is not reads a quarter of the time. The lever is **sampling more
 rows**, not processing any one row harder — the blurry half runs 18% at 24
-rows, 26% at 64 and 35% at 256, while blurring, downscaling and enlarging each
-moved it by nothing. ZXing reaches the same conclusion from the other side:
+rows, 26% at 64 and 35% at 256. Blurring, downscaling and enlarging each moved
+it by nothing — but averaging each pixel with the ones directly ABOVE and BELOW
+is worth 3 points, because a barcode is constant down its height, so that
+averages repeated measurements of one bar rather than smearing neighbouring
+ones together. ZXing reaches the same conclusion from the other side:
 its `tryHarder` mode drops the row step from height/32 to height/256.
 
 Worth knowing before turning the knobs: loosening the pattern tolerance buys

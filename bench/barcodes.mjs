@@ -139,8 +139,11 @@ if (isMainThread) {
   }
 
   for (const shard of results) {
-    for (const [set, outcome] of shard) {
-      if (outcome === null) continue;
+    // Images with no ground truth are dropped rather than skipped inside the
+    // loop: they cannot be scored either way, so they do not belong in a rate.
+    for (const [set, outcome] of shard.filter(
+      ([, result]) => result !== null
+    )) {
       const tally = tallies.get(set);
       tally.total++;
       if (outcome.read) tally.read++;
