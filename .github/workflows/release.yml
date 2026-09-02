@@ -5,8 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Serialized without cancelling: a cancelled run could publish the package and
-# leave the example undeployed, or tag without releasing.
+# Serialized without cancelling: a cancelled run could tag without publishing,
+# or publish without releasing.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -69,7 +69,7 @@ jobs:
 
   # The version PR merged. Tag, publish to npm, and deploy the example.
   release:
-    name: Release & Deploy
+    name: Release
     needs: plan
     if: needs.plan.outputs.mode == 'publish'
     runs-on: ubuntu-latest
@@ -78,14 +78,6 @@ jobs:
       contents: write
       # OIDC trusted publishing to npm, so no long-lived token is stored.
       id-token: write
-    # Records a GitHub Deployment, so the Environments panel shows what is live
-    # and when it shipped. GitHub creates the environment on first use, so no
-    # setup is required — but adding protection rules to it, and scoping the
-    # Vercel secrets to it rather than leaving them readable by every workflow
-    # in the repo, is worth doing once it exists.
-    environment:
-      name: production
-      url: ${{ vars.DEMO_URL }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -103,17 +95,14 @@ jobs:
       - run: vp test
       - run: vp pack
 
-      # Bumpy publishes each package in `.bumpy/_config.json`: the library to
-      # npm, and the example through its own `deploy` script, which is a
-      # production Vercel deploy.
+      # Bumpy publishes the library to npm. The example is deployed by
+      # Vercel's own git integration on push, not from here — see
+      # `.bumpy/_config.json`.
       - run: vp dlx $BUMPY ci release --expect-mode publish
         env:
           GH_TOKEN: ${{ github.token }}
           # So a `release: published` event can trigger other workflows.
           BUMPY_GH_TOKEN: ${{ secrets.BUMPY_GH_TOKEN }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           # Yarn 4 corrupts the tarball path Bumpy reads from stdout when
           # colour is enabled, and NO_COLOR alone is not enough for Yarn 4.
           NO_COLOR: "1"

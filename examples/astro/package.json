@@ -11,8 +11,7 @@
     "dev": "astro dev",
     "share": "node scripts/share.mjs",
     "build": "astro build",
-    "preview": "astro preview",
-    "deploy": "vercel deploy --prod --yes --token $VERCEL_TOKEN"
+    "preview": "astro preview"
   },
   "_comment": "`link:` rather than `workspace:*` because the library IS the repo root. Yarn does not symlink a workspace root into node_modules â€” it is the project, not a dependency of itself â€” and without a symlink the bundler cannot resolve subpath exports like `@saeris/hanko/handlers`. The link restores normal `exports` resolution, so this demo consumes the published surface rather than reaching into src/.",
   "dependencies": {
@@ -24,7 +23,6 @@
     "@astrojs/node": "^11.1.0",
     "@astrojs/vercel": "~11.0.8",
     "@types/node": "^25.9.1",
-    "portless": "^0.15.6",
-    "vercel": "^48.0.0"
+    "portless": "^0.15.6"
   }
 }
