@@ -1,5 +1,11 @@
 # Changelog
 
+
+## 0.2.1
+<sub>2026-09-02</sub>
+
+- Refresh the README, and give the example real navigation.
+
 ## 0.2.0
 <sub>2026-09-02</sub>
 
