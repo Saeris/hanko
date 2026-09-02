@@ -8,8 +8,5 @@
       "buildCommand": "vp pack"
     }
   },
-  "privatePackages": {
-    "version": true,
-    "tag": false
-  }
+  "ignore": ["@saeris/hanko-example-astro"]
 }
