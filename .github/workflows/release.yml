@@ -79,8 +79,10 @@ jobs:
       # OIDC trusted publishing to npm, so no long-lived token is stored.
       id-token: write
     # Records a GitHub Deployment, so the Environments panel shows what is live
-    # and when. Also where these secrets should be scoped, rather than leaving
-    # them readable by every workflow in the repo.
+    # and when it shipped. GitHub creates the environment on first use, so no
+    # setup is required — but adding protection rules to it, and scoping the
+    # Vercel secrets to it rather than leaving them readable by every workflow
+    # in the repo, is worth doing once it exists.
     environment:
       name: production
       url: ${{ vars.DEMO_URL }}
