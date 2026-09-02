@@ -1,6 +1,6 @@
 {
   "name": "@saeris/hanko",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "QR-assisted device sign-in (OAuth 2.0 Device Authorization Grant, RFC 8628) for TVs, kiosks, and anything without a keyboard",
   "keywords": [
     "oauth",
