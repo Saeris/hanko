@@ -191,17 +191,24 @@ through a tunnel with no upgrade negotiation.
 Every transition is logged in the terminal running the dev server, so the flow
 can be followed across three devices without attaching a debugger to any.
 
-## The three surfaces
+## The surfaces
 
-| Route      | Device                | What it does                                |
-| ---------- | --------------------- | ------------------------------------------- |
-| `/tv`      | the screen signing in | shows the code and QR, polls for approval   |
-| `/link`    | your phone            | scans or accepts a code, confirms, approves |
-| `/signin`  | your phone            | resolves an ATProto handle to a DID         |
-| `/account` | your phone            | signed-in devices, revoke, sign out         |
+| Route            | Device                | What it does                                  |
+| ---------------- | --------------------- | --------------------------------------------- |
+| `/`              | either                | the map, and whether this URL reaches a phone |
+| `/tv`            | the screen signing in | shows the code and QR, polls for approval     |
+| `/link`          | your phone            | scans or accepts a code, confirms, approves   |
+| `/signin`        | your phone            | resolves an ATProto handle to a DID           |
+| `/account`       | your phone            | signed-in devices, revoke, sign out           |
+| `/scanner`       | your phone            | a bare scanner: the payload raw and as a link |
+| `/scanner-debug` | your phone            | the same, reporting each stage on screen      |
 
 `/tv` is inline CSS and dependency-free JavaScript, so it costs nothing on
 modest hardware.
+
+The phone surfaces carry a bottom nav bar; `/tv` does not, since it has no
+pointer or keyboard to operate one. Signing in there sends the device to
+`/account` after a moment, standing in for the content a real one would show.
 
 ## What this demo takes shortcuts on
 

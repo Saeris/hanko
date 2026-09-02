@@ -37,6 +37,12 @@ const isLocal = /localhost|127\.0\.0\.1/u.test(origin);
         </li>
       </ol>
 
+      <p class="tools">
+        Just want to read a code? <a href="/scanner">/scanner</a> decodes
+        anything you point it at. <a href="/scanner-debug">/scanner-debug</a>
+        reports each stage on screen, for when a phone has no console to check.
+      </p>
+
       <p class="note" data-tone={isLocal ? `warn` : `ok`}>
         Serving from <code>{origin}</code>.{` `}
         {
@@ -83,6 +89,14 @@ const isLocal = /localhost|127\.0\.0\.1/u.test(origin);
   }
   a {
     color: var(--accent);
+  }
+  .tools {
+    margin: 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.9rem;
+    color: var(--ink-dim);
+    line-height: 1.55;
   }
   .note {
     margin: 0;

@@ -10,6 +10,22 @@ interface Props {
 }
 
 const { title, surface } = Astro.props;
+
+/**
+ * The phone surfaces, in the order someone moves through them.
+ *
+ * Shown only on `phone`: a TV has no pointer and no keyboard, so a nav bar
+ * there is clutter nobody can operate.
+ */
+const nav = [
+  { href: `/`, label: `Home` },
+  { href: `/account`, label: `Devices` },
+  { href: `/link`, label: `Link` },
+  { href: `/scanner`, label: `Scanner` }
+];
+
+// Compared without the trailing slash so `/link/` and `/link` both match.
+const here = Astro.url.pathname.replace(/\/$/u, ``) || `/`;
 ---
 
 <!doctype html>
@@ -87,9 +103,58 @@ const { title, surface } = Astro.props;
           transition-duration: 0.01ms !important;
         }
       }
+
+      /* Fixed to the bottom, where a thumb reaches on a phone. `env()` keeps
+         it clear of the home indicator on a notched device, which otherwise
+         swallows the last few pixels of the tap target. */
+      nav {
+        position: fixed;
+        inset: auto 0 0 0;
+        display: flex;
+        justify-content: center;
+        gap: 0.25rem;
+        padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom));
+        background: color-mix(in oklab, var(--ground) 92%, transparent);
+        backdrop-filter: blur(8px);
+        border-top: 1px solid var(--line);
+        z-index: 10;
+      }
+
+      nav a {
+        flex: 1 1 0;
+        max-width: 8rem;
+        padding: 0.6rem 0.5rem;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 0.85rem;
+        text-decoration: none;
+        color: var(--ink-dim);
+      }
+
+      nav a[aria-current="page"] {
+        color: var(--ground);
+        background: var(--accent);
+        font-weight: 600;
+      }
+
+      /* Room for the bar, so a page's last element is never under it. */
+      [data-surface="phone"] body {
+        padding-bottom: 4.5rem;
+      }
     </style>
   </head>
   <body>
     <slot />
+    {
+      surface === `phone` && (
+        <nav aria-label="Sections">
+          {nav.map(({ href, label }) => (
+            <a href={href} aria-current={here === href ? `page` : undefined}>
+              {label}
+            </a>
+          ))}
+        </nav>
+      )
+    }
   </body>
 </html>

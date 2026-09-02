@@ -1,31 +1,53 @@
-# hanko
+<div align="center">
 
-QR-assisted device sign-in for screens without a keyboard — TVs, kiosks, set-top
-boxes. An implementation of [RFC 8628][rfc], the OAuth 2.0 Device Authorization
-Grant, which is the flow behind Plex, Steam, and Discord's TV sign-in.
+# 💮 hanko「判子」
 
-The device shows a short code and a QR. The user authorizes on their phone. The
-device polls until it hears back, then signs in.
+[![CI status][ci_badge]][ci] [![npm][npm_badge]][npm] [![License][license_badge]][license]
 
+QR-assisted device sign-in for screens without a keyboard, with a QR decoder of its own.
+
+</div>
+
+---
+
+**判子** (_hanko_) is the personal seal used in Japan in place of a signature —
+pressed once to authorize something on your behalf. Which is the whole flow: a
+TV asks, you approve it from your phone, the TV is signed in.
+
+## 🎯 What it does
+
+An implementation of [RFC 8628][rfc], the OAuth 2.0 Device Authorization Grant
+— the flow behind Plex and Steam's TV sign-in, and Discord's device
+authorization. A device that is awkward to type on shows a short code and a QR;
+the user authorizes on a phone they are already signed in on; the device polls
+until it hears back.
+
+```mermaid
+sequenceDiagram
+    participant TV as 📺 Device
+    participant API as ⚙️ Your API
+    participant Phone as 📱 Phone
+
+    TV->>API: POST /device/authorize
+    API-->>TV: user_code, device_code, verification_uri
+    Note over TV: shows WDJB-MJHT<br/>and a QR of the link
+
+    loop until approved or expired
+        TV->>API: POST /device/token
+        API-->>TV: authorization_pending
+    end
+
+    Phone->>Phone: scans the QR
+    Phone->>API: POST /link (approve)
+    API-->>Phone: approved
+
+    TV->>API: POST /device/token
+    API-->>TV: access_token
 ```
-┌──────────────────────────────┐
-│   Sign in                    │
-│                              │
-│   Visit example.com/link     │        ▌▌▌ ▌ ▌▌▌
-│   and enter this code        │   OR   ▌ ▌▌▌▌ ▌▌
-│                              │        ▌▌ ▌ ▌▌▌▌
-│      W D J B - M J H T       │        ▌▌▌▌ ▌ ▌▌
-└──────────────────────────────┘
-```
 
-Zero dependencies beyond [`etiket`][etiket] for QR rendering. Runs anywhere with
-WinterTC primitives: Node, browsers, Deno, Bun, Cloudflare Workers.
-
-## Three places this flow lives
-
-hanko ships a baseline for each, and no UI components for any of them — state
-and lifecycle hooks instead, so React, Vue, Svelte, Solid, Angular, and React
-Native each bind it with their own conventions.
+Three entry points, one per device in the flow. No UI components for any of
+them — state and lifecycle hooks instead, so React, Vue, Svelte, Solid, Angular
+and React Native each bind it with their own conventions.
 
 | Entry                         | Runs on                | Gives you                                  |
 | ----------------------------- | ---------------------- | ------------------------------------------ |
@@ -33,573 +55,176 @@ Native each bind it with their own conventions.
 | `@saeris/hanko/client`        | the device signing in  | poll loop, QR rendering                    |
 | `@saeris/hanko/approve`       | the device granting it | QR reading, confirmation challenges        |
 
-## Install
+## 📷 The QR decoder
+
+`@saeris/hanko/scan` reads QR codes. Pixels in, string out — no camera, no DOM,
+no dependencies — so the same code runs in a browser, in a worker, on a server,
+or in a test.
+
+It exists because every JavaScript alternative is unmaintained: jsQR's last code
+commit was August 2021, qr-scanner's November 2022, and `BarcodeDetector` is
+still a WICG incubation that Safari has never shipped.
+
+Measured against the 718-image [BoofCV benchmark][boofcv] — photographs, not
+renders:
+
+| Decoder   | Recognition |
+| --------- | ----------- |
+| **hanko** | **74.4%**   |
+| BoofCV    | 60.69%      |
+| ZBar      | 38.95%      |
+| ZXing     | 31.87%      |
+| jsQR      | 24.8%       |
+
+```ts
+import { createQrDecoder, toGray } from "@saeris/hanko/scan";
+
+const decoder = createQrDecoder();
+const symbol = decoder.decode(toGray(rgba, width, height));
+```
+
+For a camera, run it off the main thread — the retry ladder deliberately
+outruns its own time budget, so a synchronous decode stalls the preview on
+exactly the frames someone is lining up:
+
+```ts
+import { createWorkerScanner } from "@saeris/hanko/scan";
+
+const scanner = createWorkerScanner(
+  new Worker(new URL("./decoder.ts", import.meta.url), { type: "module" })
+);
+const symbol = await scanner.scan(frame);
+```
+
+Coverage per condition, and the negative results behind it, live in
+[plan/qr-coverage.md](plan/qr-coverage.md). Both move often.
+
+## 🏗️ How it works
+
+hanko owns the **grant lifecycle** and nothing else. It never mints sessions or
+touches your user table: it tells you a grant was approved and by whom, and
+issuing a token from that is your application's decision.
+
+```mermaid
+flowchart LR
+    subgraph device["📺 Device"]
+        client["@saeris/hanko/client"]
+    end
+
+    subgraph api["⚙️ Your API"]
+        server["@saeris/hanko + /handlers"]
+        store[("DeviceGrantStore")]
+        server <--> store
+    end
+
+    subgraph phone["📱 Phone"]
+        approve["@saeris/hanko/approve"]
+        scan["@saeris/hanko/scan"]
+        approve --> scan
+    end
+
+    client -->|authorize, then poll| server
+    approve -->|approve| server
+```
+
+### Decisions worth knowing
+
+- **Zero runtime dependencies.** The grant lifecycle is the product; rendering a
+  QR is a different class of problem, so it sits behind `@saeris/hanko/qr` and
+  defers to [`etiket`][etiket] as an optional peer. Reading one had no
+  maintained option at all, which is why `/scan` exists.
+- **WinterTC primitives only.** `Request`, `Response`, `crypto.getRandomValues` —
+  so one build runs on Node, Deno, Bun, Cloudflare Workers and in a browser,
+  with no adapter per runtime.
+- **A short code is a small keyspace.** That is the deliberate trade for
+  readability, and [RFC 8628 §5.1][rfc-security] **requires you to rate-limit
+  attempts**. hanko does not do it for you: that belongs at your HTTP boundary,
+  where you can see IPs.
+- **Approval is two steps, not one.** Scanning a code that says "approve this"
+  and approving it are separate, because a QR is a link anyone can point a
+  camera at. `/approve` ships the confirmation challenge that closes that gap.
+- **The store is four methods.** `create`, `findByDeviceCode`, `findByUserCode`
+  and `update`, plus an optional `prune` — small enough that an adapter for your
+  database is a short file. The bundled memory store is for development only.
+
+## 📦 Install
 
 ```sh
 yarn add @saeris/hanko
 ```
 
-hanko has **no runtime dependencies**. Its job is RFC 8628 — the grant
-lifecycle — and that is all it ships.
-
-Drawing a QR is a different class of problem, so it lives behind
-`@saeris/hanko/qr` and defers to [`etiket`](https://www.npmjs.com/package/etiket),
-declared as an optional peer. Add it only if you render the device screen:
+Add `etiket` only if you render the device screen:
 
 ```sh
 yarn add etiket
 ```
 
-## Server
+Codes follow the spec's worked example: 8 characters from a 20-consonant
+alphabet, shown as `WDJB-MJHT`. No vowels, so a code cannot spell a word; no
+digits, so there is no `0`/`O` or `1`/`l`/`I` to misread.
 
-hanko owns the grant lifecycle and nothing else. It never mints sessions or
-tokens: `approve()` records an opaque `subject`, a successful poll hands it
-back, and your app issues whatever credential it already knows how to issue.
-That is what lets it sit alongside Better-Auth or Supabase rather than competing
-with them.
+## 🔧 The example
 
-```ts
-import { HankoServer } from "@saeris/hanko";
-import { MemoryDeviceGrantStore } from "@saeris/hanko/stores/memory";
+A working flow, and a scanner you can point at things, in
+[`examples/astro`](examples/astro).
 
-const hanko = new HankoServer({
-  store: new MemoryDeviceGrantStore(),
-  verificationUri: `https://example.com/link`
-});
+| Route            | What it is                                                           |
+| ---------------- | -------------------------------------------------------------------- |
+| `/`              | the map — what to open where, and whether the URL reaches a phone    |
+| `/tv`            | the device screen — a short code and a QR for a pending grant        |
+| `/signin`        | the phone's own sign-in; this identity is what the device inherits   |
+| `/account`       | approved devices, and revoking them                                  |
+| `/link`          | the approval page — scans that QR, or takes a typed code             |
+| `/scanner`       | a bare scanner, showing the payload raw and as a link                |
+| `/scanner-debug` | the same, reporting each stage on screen for a phone with no console |
 
-// POST /device/authorize — the device starts here
-const grant = await hanko.requestAuthorization();
-// → { device_code, user_code, verification_uri, verification_uri_complete, ... }
-
-// POST /device/token — the device polls here
-const result = await hanko.poll(deviceCode);
-if (result.status === `approved`) {
-  const session = await createSession(result.subject);
-}
-
-// POST /link — the phone approves here, after the user confirms the code
-await hanko.approve(userCode, session.userId);
+```bash
+yarn demo        # builds the library, then serves the example
+yarn demo:share  # the same, over TLS so a phone can reach it
 ```
 
-### Rendering the screen
+A camera needs a secure context, so a bare LAN IP will not do — hence the TLS
+proxy. See [examples/astro/README.md](examples/astro/README.md).
 
-```ts
-// From the /qr subpath, not the barrel: this is the one entry point that
-// needs a dependency, and a server that only issues grants never pays for it.
-import { renderDeviceQr } from "@saeris/hanko/qr";
+## 🧪 Checks
 
-const svg = renderDeviceQr(grant.verification_uri_complete, { size: 512 });
+| What           | Command             | Notes                                           |
+| -------------- | ------------------- | ----------------------------------------------- |
+| Everything     | `vp run ci`         | `vp pack && vp check && vp test`, what CI runs. |
+| Tests          | `vp test`           | Pure TypeScript; never imports react-native.    |
+| Recognition    | `yarn bench:corpus` | The 718-image corpus, sharded across workers.   |
+| Decode profile | `yarn bench`        | A still image, for `deoptkit`.                  |
+
+`vp pack` has to run before `vp check`: the example resolves `@saeris/hanko`
+through the `exports` map, which points at `dist/`, so a clean checkout cannot
+typecheck it until the library is built.
+
+## 🚀 Releasing
+
+Driven by [bumpy][bumpy]. Every change carries a **bump file** in `.bumpy/`
+saying what moved and how far, so the changelog cannot fall behind the code.
+
+```bash
+yarn bumpy add
 ```
 
-Defaults are tuned for a TV viewed from across a room. Error correction is `M`,
-not `H`: higher correction needs more modules to encode the same URL, so at a
-fixed size each module gets smaller — and on a clean screen, module size matters
-more than damage tolerance.
+Merging that opens a **Version PR**; merging _that_ tags the release and
+publishes to npm over OIDC trusted publishing, so no token is stored. The
+example deploys to Vercel on push, independently of releases.
 
-**Show the code on both screens, and let the user compare.**
-[RFC 8628 §3.3.1][rfc] is explicit about the mitigation:
+## 🥂 License
 
-> The server SHOULD display the `user_code` to the user and ask them to verify
-> that it matches the `user_code` being displayed on the device to confirm they
-> are authorizing the correct device.
-
-So `createApprovalHandler` returns the code, and the approval screen shows it
-next to which client is asking. The check is a **visual comparison against a
-physically separate screen** — not a memory test. Making someone re-type a code
-they can see proves nothing extra and is friction no production implementation
-of this flow imposes.
-
-`device_code` is never returned. That one is the bearer credential.
-
-## Device
-
-```ts
-import { DeviceAuthClient } from "@saeris/hanko/client";
-
-const client = new DeviceAuthClient({
-  tokenUrl: `https://example.com/device/token`,
-  deviceCode: grant.device_code,
-  interval: grant.interval,
-  expiresIn: grant.expires_in,
-  hooks: {
-    onTransition: (from, to) => render(to),
-    onSlowDown: (seconds) => console.log(`slowing to ${seconds}s`)
-  }
-});
-
-const outcome = await client.run(signal);
-// → { status: "authorized", tokens } | "denied" | "expired" | "aborted"
-```
-
-Polling only — no SSE or WebSocket. A sign-in screen may stay powered on for
-days, and a persistent connection is one more thing to leak and reconnect on
-hardware you cannot attach a profiler to.
-
-For the common case where you only want the outcome:
-
-```ts
-import { pollUntilAuthorized } from "@saeris/hanko/client";
-
-const outcome = await pollUntilAuthorized({
-  tokenUrl,
-  deviceCode,
-  interval,
-  expiresIn
-});
-```
-
-## Approving device
-
-The phone that is already signed in. Two topologies exist in the wild and hanko
-supports both through one flow:
-
-- **Plex**: the OS camera opens `verification_uri_complete` in a browser. The
-  code arrives in the query string — no scanning step.
-- **Discord / Steam**: the app scans in-place and the user never leaves it.
-
-```ts
-import { ApprovalClient, codeEntryChallenge } from "@saeris/hanko/approve";
-
-const client = new ApprovalClient({
-  resolve: async (code) =>
-    await fetch(`/link?user_code=${code}`).then((r) =>
-      r.ok ? r.json() : null
-    ),
-  submit: async (code, approved) => {
-    await fetch(`/link`, {
-      method: `POST`,
-      body: new URLSearchParams({ user_code: code, approved: String(approved) })
-    });
-  },
-  challenge: codeEntryChallenge(),
-  hooks: { onTransition: (from, to) => render(to) }
-});
-
-// Plex path — code came from the URL
-await client.submitCode(new URL(location.href).searchParams.get(`user_code`));
-
-// Discord/Steam path — scan frames until one carries a code
-client.startScanning();
-await client.scan(videoElement);
-
-// Then, once the user answers the challenge
-await client.confirm(typedCode);
-await client.approve();
-```
-
-`approve()` refuses until the challenge passes. `deny()` never does — a user who
-cannot confirm a code is the one most likely to be looking at a phishing
-attempt, and they must always be able to say no.
-
-### Reading QR codes
-
-hanko defines a two-method `QrScanner` interface and lets you bring a decoder.
-It deliberately does not pick one for you.
-
-**`BarcodeDetector` is not a web standard.** It is a WICG incubation that MDN
-flags as outside Baseline; Safari has never shipped it, and no vendor has
-committed to it. Building against it directly means the scanner silently does
-nothing on an iPhone — the device most people approve from.
-
-The recommendation is [`qr-scanner`][qr-scanner]: ~6 kB gzipped,
-self-contained, and it uses a native `BarcodeDetector` where one exists and its
-own worker otherwise. It owns the camera too, which is most of the work.
-
-```ts
-import QrScanner from "qr-scanner";
-import { parseApprovalLink } from "@saeris/hanko/approve";
-
-const scanner = new QrScanner(
-  videoElement,
-  ({ data }) => {
-    const link = parseApprovalLink(data);
-    if (link) void client.submitCode(link.userCode);
-  },
-  { preferredCamera: `environment`, maxScansPerSecond: 10 }
-);
-await scanner.start();
-```
-
-Alternatives, and what they cost:
-
-| Decoder                  | Size         | Note                                                     |
-| ------------------------ | ------------ | -------------------------------------------------------- |
-| `qr-scanner`             | ~6 kB gz     | self-contained, manages the camera                       |
-| `barcode-detector`       | ~1.5 MB WASM | more formats, but fetches its WASM from a CDN at runtime |
-| native `BarcodeDetector` | 0            | absent on Safari; use `createBarcodeDetectorScanner()`   |
-| `expo-camera`            | —            | React Native, where no web API exists                    |
-
-Anything satisfying `QrScanner` works, including a React Native camera:
-
-```ts
-const scanner: QrScanner = {
-  detect: async (frame) => [{ rawValue: await scanWithExpoCamera(frame) }]
-};
-```
-
-`createBarcodeDetectorScanner` restricts detection to `qr_code`. An EAN-13 in
-the same frame would otherwise be posted to your approval endpoint as though it
-were a user code.
-
-### Confirmation challenges
-
-Scanning a QR removes the moment where the user would have noticed the code was
-wrong. [RFC 8628 §5.4][rfc-security] asks you to put it back. How much friction
-that deserves is a product decision, so it is pluggable:
-
-| Strategy                              | Pattern                    | Friction            |
-| ------------------------------------- | -------------------------- | ------------------- |
-| `noChallenge()`                       | Discord, Steam             | one tap             |
-| `tripletChallenge({ generate })`      | Google mobile approval     | one tap, real check |
-| `codeEntryChallenge()`                | GitHub sudo, Plex          | types the code      |
-| `platformChallenge({ authenticate })` | FaceID, WebAuthn, passcode | biometric           |
-
-`allOf([...])` composes them. The pairing worth knowing: a biometric proves
-possession of the phone, a code check proves the user is looking at the screen
-being authorized. Neither covers both.
-
-```ts
-import {
-  allOf,
-  codeEntryChallenge,
-  platformChallenge
-} from "@saeris/hanko/approve";
-
-const challenge = allOf([
-  platformChallenge({
-    authenticate: () => LocalAuthentication.authenticateAsync()
-  }),
-  codeEntryChallenge()
-]);
-```
-
-For a public screen — a taproom TV anyone can walk up to — do not use
-`noChallenge()`.
-
-## Opening the app from a scanned code
-
-One QR should open the native app when it is installed, and the web page when it
-is not — without the device ever showing an error.
-
-That rules out custom schemes as the QR payload. A `beerjournal://` code read by
-the OS camera on a phone without the app fails silently and unrecoverably: the
-user sees "cannot open" with nowhere to go. **Universal Links (iOS) and App
-Links (Android)** solve this by making the payload an ordinary `https://` URL
-that the OS _routes_ to the app when the domain and app are associated.
-
-So the QR keeps encoding `verification_uri_complete` unchanged. The routing
-lives in association files served from the same origin:
-
-```ts
-import { createWellKnownHandler } from "@saeris/hanko/handlers";
-
-const wellKnown = createWellKnownHandler({
-  appleAppIds: [`QQ57RJ5UTD.gg.saeris.beerjournal`],
-  androidPackageName: `gg.saeris.beerjournal`,
-  // SHA-256 of the PLAY-signed cert, not your local keystore.
-  androidFingerprints: [`AA:BB:...`]
-});
-```
-
-Both files must be served from the **same origin** as the approval page, over
-HTTPS, **with no redirects**. A redirect or a wrong content-type makes the
-association fail silently, with nothing in any log — the usual reason universal
-links "just don't work".
-
-### Expo
-
-```ts
-import { expoLinkingConfig } from "@saeris/hanko";
-
-// Merge into app.json
-expoLinkingConfig({ origin: `https://example.com`, scheme: `beerjournal` });
-// → { scheme, ios: { associatedDomains: ["applinks:example.com"] },
-//     android: { intentFilters: [{ autoVerify: true, ... }] } }
-```
-
-Two things that silently break this:
-
-- `associatedDomains` takes **no protocol** — `applinks:example.com`, never
-  `applinks:https://example.com`.
-- `autoVerify: true` is what makes Android fetch `assetlinks.json` and open the
-  app without a chooser dialog. Without it the link is registered and
-  practically useless.
-
-**Universal links do not work in Expo Go.** The entitlement is registered at
-build time, so this needs a development or production build. A project pinned to
-Expo Go uses the web fallback until it moves to dev builds — which is a
-sequencing constraint, not a blocker: the same QR already works.
-
-Receiving the link:
-
-```ts
-import * as Linking from "expo-linking";
-import { parseApprovalLink } from "@saeris/hanko/approve";
-
-const initial = await Linking.getInitialURL();
-const link = initial && parseApprovalLink(initial, { scheme: `beerjournal` });
-if (link) await client.submitCode(link.userCode);
-```
-
-### PWAs on both ends
-
-The whole flow works PWA-to-PWA, with one caveat worth knowing up front.
-
-**The signing-in device** (the TV) is the easy half: it renders a code and an
-SVG QR, then polls. No camera, no install, no platform APIs. A Fire Stick or Pi
-browser runs it as-is.
-
-**The approving device** is where PWAs get thin:
-
-| Capability                          | Status                                |
-| ----------------------------------- | ------------------------------------- |
-| Receive an https link               | works everywhere                      |
-| `launch_handler: navigate-existing` | Chromium only; falls back cleanly     |
-| Camera scanning (`getUserMedia`)    | works, but see below                  |
-| Being the OS camera's target        | **installed PWAs cannot claim links** |
-
-The last row is the real constraint: a PWA cannot register for Universal Links.
-The OS camera opens the _browser_, not your installed PWA. `launch_handler` only
-controls what happens once the link reaches your origin.
-
-Camera access inside an installed iOS PWA was broken from iOS 18 until 18.4, and
-permission still is not persisted the way it is in Safari proper. So on the
-approving side, **the typed-code path is the reliability floor, not a nicety** —
-build the scanner as an enhancement over it, never the only way in.
-
-```ts
-import { consumeLaunchTarget, parseApprovalLink } from "@saeris/hanko/approve";
-
-// Reads launchQueue where supported. Safari and Firefox have none, and the
-// `location.href` fallback is opt-in (`fallbackToLocation: true`) because it
-// cannot tell a launch from an ordinary page load — it fires on every visit.
-// Turn it on only for a page reached exclusively by launch; otherwise a plain
-// visit submits its own URL as a code and fails.
-consumeLaunchTarget((href) => {
-  const link = parseApprovalLink(href);
-  if (link) void client.submitCode(link.userCode);
-});
-```
-
-Add `pwaLaunchHandler()` to your manifest so a scanned link reuses the open
-window rather than stacking a second one behind it.
-
-### What each device actually gets
-
-| Approving device                      | Scanned QR opens            | Notes                     |
-| ------------------------------------- | --------------------------- | ------------------------- |
-| Native app installed (dev/prod build) | the app, directly           | best case                 |
-| Native app absent                     | the web page                | same QR, no error         |
-| Installed PWA                         | the browser, then your page | PWA cannot claim the link |
-| Desktop browser                       | the web page                | typed code only           |
-
-Every row reaches a working approval screen. That is the property worth
-protecting — and the reason the payload stays an `https://` URL.
-
-## Edge runtimes
-
-The server half is stateless by construction: every request loads its grant,
-applies one transition, and writes it back. Nothing is held between
-invocations, so a flow survives its requests landing on different workers, or
-on an instance frozen mid-flow.
-
-```ts
-// Cloudflare Workers
-import { createHandlers } from "@saeris/hanko/handlers";
-import { HankoServer } from "@saeris/hanko";
-import { KvDeviceGrantStore, kvFromOptionsApi } from "@saeris/hanko/stores/kv";
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const handlers = createHandlers({
-      server: new HankoServer({
-        store: new KvDeviceGrantStore({
-          kv: kvFromOptionsApi({
-            get: (k) => env.GRANTS.get(k),
-            set: (k, v, o) => env.GRANTS.put(k, v, o),
-            remove: (k) => env.GRANTS.delete(k)
-          })
-        }),
-        verificationUri: `https://example.com/link`
-      }),
-      // Read from YOUR session — never from the request body.
-      authenticate: (req) => getSession(req)?.userId ?? null,
-      createSession: (subject) => mintToken(subject),
-      rateLimit: (req, code) =>
-        limiter.check(req.headers.get(`CF-Connecting-IP`), code)
-    });
-    return handlers.fetch(request);
-  }
-};
-```
-
-The individual handlers — `authorize`, `token`, `approval` — are exported
-separately for file-based routing (Astro, Next, SvelteKit, Vercel Functions).
-
-### Multiple hostnames, one deployment
-
-The QR has to encode the host the device is actually talking to. One deployment
-is commonly reachable through several — a preview URL, a custom domain, a
-tunnel during development — and a `verificationUri` fixed at construction time
-points at only one of them. The failure is silent: the code renders correctly
-and the phone lands nowhere.
-
-`createAuthorizationHandler` therefore derives the origin per request from
-`x-forwarded-host` and `x-forwarded-proto`, which every common proxy sets —
-ngrok, Cloudflare, Vercel, nginx. The configured `verificationUri` remains the
-fallback for direct requests that carry no forwarded headers.
-
-```ts
-createAuthorizationHandler({
-  server,
-  verificationPath: `/link`, // appended to the detected origin
-  trustForwardedHost: true // the default
-});
-```
-
-Set `trustForwardedHost: false` to always use the configured value. Worth doing
-if your platform does not strip client-sent `x-forwarded-*` headers and you
-would rather pin the origin: those headers are client-controllable in that
-case. They are safe for building a URL the same client will visit — which is
-all this does — but never use them for an authorization decision.
-
-Calling the server directly takes the same override:
-
-```ts
-await server.requestAuthorization({
-  verificationUri: `https://${request.headers.get("x-forwarded-host")}/link`
-});
-```
-
-### Persistence
-
-| Layer                               | Adapter                                                     |
-| ----------------------------------- | ----------------------------------------------------------- |
-| Upstash Redis, Vercel KV, `ioredis` | `KvDeviceGrantStore` + `kvFromOptionsApi({ ttlKey: "ex" })` |
-| Cloudflare Workers KV               | `kvFromOptionsApi({ ttlKey: "expirationTtl" })`             |
-| Deno KV                             | `KeyValueAdapter` directly                                  |
-| Supabase / Postgres                 | implement `DeviceGrantStore` (four methods)                 |
-| Durable Objects                     | implement `DeviceGrantStore` over `ctx.storage`             |
-
-TTL does the pruning, with a grace window past the deadline so the server can
-answer `expired_token` honestly instead of "unknown code" — which a client
-cannot distinguish from a typo.
-
-**Rate limiting is your job.** [§5.1][rfc-security] requires it, and hanko
-cannot do it portably: an effective limiter needs the client IP, which lives in
-a platform-specific header. The `rateLimit` seam exists so the requirement is
-not silently skipped.
-
-## State machines
-
-Both halves are explicit state machines with declarative transition tables. The
-transitions are data, so they can be read against the RFC side by side — and
-illegal moves are impossible by construction rather than guarded against.
-
-**Grant** (server):
-
-```
-pending ──APPROVE──▶ approved ──REDEEM──▶ consumed
-   │                     │
-   ├──DENY────▶ denied   └──EXPIRE──▶ expired
-   └──EXPIRE──▶ expired
-```
-
-Redemption, not approval, is what ends the flow — a `device_code` that stayed
-redeemable after approval would be a replayable bearer credential. And an
-approval nobody collected still expires.
-
-**Poll** (device):
-
-```
-idle ──START──▶ waiting ──TICK──▶ polling
-                   ▲                 │
-                   └── pending ──────┤── SUCCESS ────────▶ authorized
-                       slow_down     ├── ACCESS_DENIED ──▶ denied
-                       network error └── EXPIRED_TOKEN ──▶ expired
-```
-
-The interval lives in context, not state: `waiting` at 5s and `waiting` at 20s
-are the same state. That separation keeps the two pacing rules distinct —
-`slow_down` adds a fixed 5s permanently ([§3.5][rfc-token]), while a network
-failure doubles with a cap. Conflating them either hammers a struggling server
-or crawls when it only asked for a small delay.
-
-**Approval** (the phone):
-
-```
-idle ──SCAN──▶ scanning ──CODE──▶ resolving ──RESOLVED──▶ confirming
-  │                                    │                      │
-  └──CODE (from URL)───────────────────┘                      │
-                                       └──REJECTED──▶ invalid │
-                                                              ▼
-                          approved ◀──SUBMITTED── submitting ─┘
-                          denied   ◀──SUBMITTED──
-```
-
-`confirming` accepts `CHALLENGE_FAILED` back into itself: a mistyped code is a
-retry, not a dead end. Both entry paths — scanned in-app or arriving by URL —
-converge on the same confirmation, so the security-sensitive half is written
-once.
-
-All three machines are exported if you want to drive them yourself — persisting
-grant state in a Durable Object, say, or rendering a screen straight from the
-state:
-
-```ts
-import {
-  grantTransition,
-  pollTransition,
-  approvalTransition,
-  canTransitionGrant
-} from "@saeris/hanko";
-```
-
-## Codes
-
-Defaults follow the spec's worked example: 8 characters from a 20-consonant
-alphabet, displayed as `WDJB-MJHT`. No vowels, so codes cannot spell words; no
-digits, so there is no `0`/`O` or `1`/`l`/`I` confusion.
-
-```ts
-import { generateUserCode, NUMERIC_ALPHABET } from "@saeris/hanko";
-
-generateUserCode(); // "WDJB-MJHT"
-generateUserCode({ alphabet: NUMERIC_ALPHABET, length: 9 }); // "0194-5073-0"
-```
-
-A short code is a small keyspace, which is the deliberate trade for
-readability. **[RFC 8628 §5.1][rfc-security] requires you to rate-limit
-attempts** — the code alone is not brute-force resistant, and hanko does not
-rate-limit for you. That belongs at your HTTP boundary, where you can see IPs.
-
-## Storage
-
-`DeviceGrantStore` is four methods, so adapters are small:
-
-```ts
-interface DeviceGrantStore {
-  create(grant: DeviceGrant): Promise<void> | void;
-  findByDeviceCode(
-    deviceCode: string
-  ): Promise<DeviceGrant | null> | DeviceGrant | null;
-  findByUserCode(
-    userCode: string
-  ): Promise<DeviceGrant | null> | DeviceGrant | null;
-  update(grant: DeviceGrant): Promise<void> | void;
-  prune?(now: number): Promise<void> | void;
-}
-```
-
-The bundled `MemoryDeviceGrantStore` is for development only — state dies with
-the process and is not shared across instances.
-
-## License
-
-MIT © [Drake Costa](https://saeris.gg)
+[MIT][license] © [Drake Costa][personal-website]
 
 [rfc]: https://datatracker.ietf.org/doc/html/rfc8628
-[rfc-token]: https://datatracker.ietf.org/doc/html/rfc8628#section-3.5
 [rfc-security]: https://datatracker.ietf.org/doc/html/rfc8628#section-5
 [etiket]: https://github.com/productdevbook/etiket
-[qr-scanner]: https://github.com/nimiq/qr-scanner
+[boofcv]: https://boofcv.org/index.php?title=Performance:QrCode
+[bumpy]: https://github.com/dmno-dev/bumpy
+[ci_badge]: https://github.com/Saeris/hanko/actions/workflows/ci.yml/badge.svg
+[ci]: https://github.com/Saeris/hanko/actions/workflows/ci.yml
+[npm_badge]: https://img.shields.io/npm/v/@saeris/hanko.svg
+[npm]: https://www.npmjs.com/package/@saeris/hanko
+[license_badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[license]: https://github.com/Saeris/hanko/blob/main/LICENSE.md
+[personal-website]: https://saeris.gg
