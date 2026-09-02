@@ -91,9 +91,13 @@ jobs:
 
       # The same gate as CI, re-run against the merge commit. CI passed on the
       # version PR, but this is the commit that actually ships.
-      - run: vp check
-      - run: vp test
-      - run: vp pack
+      #
+      # One script, shared with CI, so the two cannot drift. The order inside
+      # it matters: the example resolves `@saeris/hanko` through the `exports`
+      # map, which points at `dist/`, so a clean checkout cannot typecheck it
+      # until `vp pack` has run. This job had check before pack and failed the
+      # moment it first reached publish mode.
+      - run: vp run ci
 
       # Bumpy publishes the library to npm. The example is deployed by
       # Vercel's own git integration on push, not from here — see
