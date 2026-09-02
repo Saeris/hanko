@@ -1,0 +1,78 @@
+name: Preview
+
+on:
+  pull_request:
+    branches: [main]
+
+# One preview per PR. Cancelling here is safe and desirable: an outdated
+# preview has no value, unlike a half-finished release.
+concurrency:
+  group: preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    # Opt-in rather than automatic. A preview deploy exposes a running instance
+    # of the demo to anyone with the URL and consumes deploy credentials, so a
+    # fork's PR must not trigger one — and most PRs to a decoder library have
+    # nothing to preview. Label a PR `preview` to get one.
+    if: contains(github.event.pull_request.labels.*.name, 'preview')
+    permissions:
+      contents: read
+      pull-requests: write
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "lts"
+          cache: true
+
+      # The example consumes the library through its published entry points,
+      # so the library has to be built before the example can be.
+      - run: vp pack
+
+      - id: deploy
+        working-directory: examples/astro
+        run: |
+          url=$(yarn dlx vercel deploy --yes --token "$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const url = ${{ toJSON(steps.deploy.outputs.url) }};
+            const marker = `<!-- preview-deploy -->`;
+            const body = `${marker}\n**Preview:** ${url}\n\nScanner demo at \`/scanner\`.`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number
+            });
+
+            // Update in place rather than adding a comment per push, which
+            // would bury the PR conversation under deploy noise.
+            const existing = comments.find((c) => c.body?.startsWith(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }

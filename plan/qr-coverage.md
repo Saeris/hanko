@@ -524,16 +524,16 @@ still pays for them.
 
 ### Three workloads, three different hot spots
 
-No public QR *video* corpus exists — the available datasets are all still
+No public QR _video_ corpus exists — the available datasets are all still
 images (Roboflow's 1,547, a merged 8,748-image set), and the video research is
 deblurring work with no barcode content. So the workloads are synthesised, and
 which one is used decides what the profiler shows:
 
-| workload            | hottest function     | share of JS |
-| ------------------- | -------------------- | ----------- |
-| still (`decode`)    | `scoreTransform`     | 27%         |
-| empty (`noise`)     | candidate dedup scan | quadratic   |
-| viewfinder (`video`)| `findFinderBlobs`    | 22%         |
+| workload             | hottest function     | share of JS |
+| -------------------- | -------------------- | ----------- |
+| still (`decode`)     | `scoreTransform`     | 27%         |
+| empty (`noise`)      | candidate dedup scan | quadratic   |
+| viewfinder (`video`) | `findFinderBlobs`    | 22%         |
 
 None of the three appears near the top for the others. `findFinderBlobs` in
 particular rarely fires on a still or an empty frame, so two of the three

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "yarn astro build",
+  "outputDirectory": ".vercel/output",
+  "framework": "astro",
+  "installCommand": "yarn install --immutable"
+}

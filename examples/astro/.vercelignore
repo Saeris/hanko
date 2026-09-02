@@ -1,0 +1,4 @@
+# The corpus is 718 photographs used only by benchmarks, and shipping it would
+# dwarf the deployment.
+.corpus
+bench

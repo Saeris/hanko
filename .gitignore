@@ -105,3 +105,6 @@ profiles/
 # it is 251MB and published without a licence, so it is a development
 # tool rather than a dependency.
 .corpus/
+
+# Vercel build output
+.vercel

@@ -1,0 +1,266 @@
+---
+/**
+ * A scanner you can point at things.
+ *
+ * The library ships a decoder, not a scanner: pixels in, string out, no
+ * camera and no DOM. This page is the other half — it opens the camera, pumps
+ * frames into a worker, and shows what comes back, so the decoder can be
+ * tried on real codes in real light rather than only against a corpus.
+ *
+ * It reports the payload two ways because they answer different questions.
+ * The raw string says what the symbol actually contains, bytes and all; the
+ * link says what a user would do with it. A code whose content is *nearly* a
+ * URL is a common and confusing failure, and showing both makes it obvious.
+ */
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Scanner">
+  <main>
+    <h1>Scanner</h1>
+
+    <div class="viewport">
+      <video id="video" playsinline muted></video>
+      <div class="reticle" aria-hidden="true"></div>
+    </div>
+
+    <p id="status" role="status">Starting the camera…</p>
+
+    <section id="result" hidden>
+      <h2>Decoded</h2>
+
+      <dl>
+        <dt>Raw</dt>
+        <dd><output id="raw"></output></dd>
+
+        <dt>As a link</dt>
+        <dd id="link-row"><span id="not-a-link">not a URL</span></dd>
+      </dl>
+
+      <p class="actions">
+        <button id="copy" type="button">Copy</button>
+        <button id="again" type="button">Scan again</button>
+      </p>
+    </section>
+
+    <details id="diagnostics">
+      <summary>Diagnostics</summary>
+      <dl class="stats">
+        <dt>Camera</dt><dd id="stat-camera">—</dd>
+        <dt>Frames</dt><dd id="stat-frames">0</dd>
+        <dt>Decode</dt><dd id="stat-decode">—</dd>
+        <dt>Worker</dt><dd id="stat-worker">—</dd>
+      </dl>
+      <p><a href="/scanner-debug">deeper diagnostics</a></p>
+    </details>
+  </main>
+</Base>
+
+<style>
+  .viewport {
+    position: relative;
+    max-width: 32rem;
+    margin-inline: auto;
+    background: #000;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+  }
+
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* A frame to aim with. Purely advisory: the decoder searches the whole
+     image, so this guides the hand rather than bounding the search. */
+  .reticle {
+    position: absolute;
+    inset: 15%;
+    border: 2px solid rgb(255 255 255 / 0.75);
+    border-radius: 0.5rem;
+    box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.25);
+  }
+
+  #status {
+    text-align: center;
+    min-height: 1.5em;
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem 1rem;
+    align-items: baseline;
+  }
+
+  dt {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* The payload is arbitrary bytes and may be long, so it wraps anywhere
+     rather than stretching the page. */
+  output,
+  #link-row {
+    font-family: ui-monospace, monospace;
+    overflow-wrap: anywhere;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .stats dt {
+    font-weight: 400;
+    opacity: 0.7;
+  }
+</style>
+
+<script>
+  import { createWorkerScanner } from "@saeris/hanko/scan";
+  import { openCamera } from "../lib/camera";
+
+  const el = <T extends HTMLElement>(id: string): T =>
+    document.getElementById(id) as T;
+
+  const video = el<HTMLVideoElement>(`video`);
+  const status = el(`status`);
+  const result = el(`result`);
+  const raw = el<HTMLOutputElement>(`raw`);
+  const linkRow = el(`link-row`);
+  const notALink = el(`not-a-link`);
+  const statFrames = el(`stat-frames`);
+  const statCamera = el(`stat-camera`);
+  const statDecode = el(`stat-decode`);
+  const statWorker = el(`stat-worker`);
+
+  /**
+   * Whether a payload is something a browser would navigate to.
+   *
+   * Deliberately narrow. `URL` accepts `mailto:`, `javascript:` and every
+   * other scheme, and turning an arbitrary scanned string into a live link is
+   * how a scanner becomes an attack surface — so only http and https are
+   * offered, and the raw text is always shown beside it.
+   */
+  const asLink = (value: string): URL | null => {
+    try {
+      const url = new URL(value);
+      return url.protocol === `http:` || url.protocol === `https:`
+        ? url
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const show = (value: string): void => {
+    raw.textContent = value;
+
+    const url = asLink(value);
+    linkRow.replaceChildren();
+
+    if (url === null) {
+      linkRow.append(notALink);
+    } else {
+      const anchor = document.createElement(`a`);
+      anchor.href = url.href;
+      anchor.textContent = url.href;
+      // A scanned link is untrusted: opening it in a new context keeps it away
+      // from this page, and `noreferrer` stops the demo's URL leaking to it.
+      anchor.rel = `noopener noreferrer`;
+      anchor.target = `_blank`;
+      linkRow.append(anchor);
+    }
+
+    result.hidden = false;
+    status.textContent = `Decoded.`;
+  };
+
+  el(`copy`).addEventListener(`click`, () => {
+    void navigator.clipboard?.writeText(raw.textContent ?? ``);
+  });
+
+  const start = async (): Promise<void> => {
+    result.hidden = true;
+    status.textContent = `Starting the camera…`;
+
+    let camera;
+    try {
+      camera = await openCamera(video);
+    } catch (error) {
+      // Permission denied, no camera, or an insecure origin — all arrive here
+      // and all are the user's problem to fix, so say which.
+      status.textContent = `Camera unavailable: ${String(error)}`;
+      return;
+    }
+
+    const { width, height } = camera.settings;
+    statCamera.textContent = `${width ?? `?`}x${height ?? `?`}`;
+
+    // The decoder runs in a worker so the preview never stutters. A decode
+    // that overruns its budget — which the ladder does — would otherwise drop
+    // frames on exactly the frames someone is trying to line up.
+    const worker = new Worker(
+      new URL(`../workers/decoder.ts`, import.meta.url),
+      { type: `module` }
+    );
+    statWorker.textContent = `running`;
+
+    const scanner = createWorkerScanner(worker);
+
+    let frames = 0;
+    let stopped = false;
+
+    const stop = (): void => {
+      stopped = true;
+      scanner.close();
+      camera.stop();
+      statWorker.textContent = `stopped`;
+    };
+
+    el(`again`).addEventListener(`click`, () => {
+      stop();
+      void start();
+    });
+
+    const pump = async (): Promise<void> => {
+      while (!stopped) {
+        const frame = camera.grab();
+        if (frame === null) {
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          continue;
+        }
+
+        frames++;
+        statFrames.textContent = String(frames);
+
+        const started = performance.now();
+        const symbol = await scanner.scan(frame);
+        const elapsed = performance.now() - started;
+
+        // A dropped frame — one offered while a decode was in flight —
+        // returns instantly, so only real attempts are timed.
+        if (elapsed > 1) statDecode.textContent = `${elapsed.toFixed(0)}ms`;
+
+        if (symbol !== null) {
+          show(symbol.value);
+          stop();
+          return;
+        }
+
+        // Yield to the compositor. Without this the loop starves the preview
+        // even though the decoding itself is elsewhere.
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    };
+
+    status.textContent = `Point at a QR code.`;
+    void pump();
+  };
+
+  void start();
+</script>

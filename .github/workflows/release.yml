@@ -5,39 +5,25 @@ on:
     branches: [main]
   workflow_dispatch:
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+# Serialized without cancelling: a cancelled run could publish the package and
+# leave the example undeployed, or tag without releasing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
-# id-token must be at the workflow level for OIDC trusted publishing.
-# Job-level permissions blocks replace (not merge) workflow-level ones, which
-# can cause workflow_dispatch triggers to silently lose id-token access.
-permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
+env:
+  BUMPY: "@varlock/bumpy@1.7.0"
 
 jobs:
-  changes:
-    name: Detect Changes
-    if: github.repository == 'Saeris/library-template'
+  # What would a release do right now? Read-only and credential-free — the
+  # answer decides which of the two jobs below runs, and only ever one.
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      version: ${{ steps.result.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
-        id: filter
-        with:
-          filters: |
-            version:
-              - 'package.json'
-      - id: result
-        run: echo "version=${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.version }}" >> $GITHUB_OUTPUT
-
-  bump:
-    name: Bump
-    needs: [changes]
-    if: needs.changes.outputs.version == 'false'
-    runs-on: ubuntu-latest
+      mode: ${{ steps.plan.outputs.mode }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -48,24 +34,56 @@ jobs:
           node-version: "lts"
           cache: true
 
-      - run: vp dlx @varlock/bumpy ci plan
+      - id: plan
+        run: vp dlx $BUMPY ci plan
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - run: vp dlx @varlock/bumpy ci release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BUMPY_GH_TOKEN: ${{ secrets.BUMPY_GH_TOKEN }}
-          # Yarn 4 corrupts the tarball path Bumpy captures from stdout if
-          # color codes are enabled. NO_COLOR alone is not enough for Yarn 4.
-          NO_COLOR: "1"
-          YARN_ENABLE_COLORS: "false"
-
-  publish:
-    name: Publish
-    needs: [changes]
-    if: needs.changes.outputs.version == 'true'
+  # Opens or updates the version PR: the bump and changelog, for review before
+  # anything ships or deploys. Carries no deploy credentials.
+  version-pr:
+    name: Version PR
+    needs: plan
+    if: needs.plan.outputs.mode == 'version-pr'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "lts"
+          cache: true
+
+      - run: vp dlx $BUMPY ci release --expect-mode version-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # A PR opened with the default token does not trigger workflows —
+          # GitHub's anti-recursion guard — so a version PR created without
+          # this could never satisfy its own required checks.
+          BUMPY_GH_TOKEN: ${{ secrets.BUMPY_GH_TOKEN }}
+
+  # The version PR merged. Tag, publish to npm, and deploy the example.
+  release:
+    name: Release & Deploy
+    needs: plan
+    if: needs.plan.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      # OIDC trusted publishing to npm, so no long-lived token is stored.
+      id-token: write
+    # Records a GitHub Deployment, so the Environments panel shows what is live
+    # and when. Also where these secrets should be scoped, rather than leaving
+    # them readable by every workflow in the repo.
+    environment:
+      name: production
+      url: ${{ vars.DEMO_URL }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -77,11 +95,24 @@ jobs:
           cache: true
           registry-url: "https://registry.npmjs.org"
 
+      # The same gate as CI, re-run against the merge commit. CI passed on the
+      # version PR, but this is the commit that actually ships.
+      - run: vp check
+      - run: vp test
       - run: vp pack
 
-      - run: vp dlx @varlock/bumpy ci release
+      # Bumpy publishes each package in `.bumpy/_config.json`: the library to
+      # npm, and the example through its own `deploy` script, which is a
+      # production Vercel deploy.
+      - run: vp dlx $BUMPY ci release --expect-mode publish
         env:
           GH_TOKEN: ${{ github.token }}
+          # So a `release: published` event can trigger other workflows.
           BUMPY_GH_TOKEN: ${{ secrets.BUMPY_GH_TOKEN }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          # Yarn 4 corrupts the tarball path Bumpy reads from stdout when
+          # colour is enabled, and NO_COLOR alone is not enough for Yarn 4.
           NO_COLOR: "1"
           YARN_ENABLE_COLORS: "false"

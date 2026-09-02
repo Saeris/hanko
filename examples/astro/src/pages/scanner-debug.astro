@@ -2,10 +2,11 @@
 /**
  * Scanner diagnostics.
  *
- * The approval page fails silently by design: `onDecodeError` fires on every
- * frame that has no code in it, so "the worker is broken" and "you are not
- * pointing at a QR" produce identical output. This page separates them by
- * reporting each stage on screen — there is no console on a phone.
+ * A scanner fails silently by nature: a frame with no code in it and a broken
+ * decode pipeline produce the same output, which is nothing. This page
+ * separates them by reporting each stage on screen — there is no console on a
+ * phone — and by counting decode attempts, since attempts without a result is
+ * the healthy state and no attempts at all is the fault.
  */
 import Base from "../layouts/Base.astro";
 ---
@@ -41,9 +42,10 @@ import Base from "../layouts/Base.astro";
   say(`BarcodeDetector present: ${String(`BarcodeDetector` in globalThis)}`);
   say(`getUserMedia present: ${String(Boolean(navigator.mediaDevices?.getUserMedia))}`);
 
-  // The worker is built from a Blob URL, which a CSP without `worker-src
-  // blob:` blocks. Constructing one directly says whether that is the problem
-  // BEFORE qr-scanner buries it.
+  // Kept as a control even though the decoder now uses a bundled module
+  // worker rather than a blob URL. A CSP without `worker-src blob:` blocks
+  // this one and not ours, so a failure here with a working scanner below
+  // says the policy is tight rather than that anything is broken.
   try {
     const probe = new Worker(
       URL.createObjectURL(new Blob([`self.postMessage('alive')`], { type: `text/javascript` }))
@@ -60,50 +62,76 @@ import Base from "../layouts/Base.astro";
   }
 
   try {
-    const { default: QrScanner } = await import(`qr-scanner`);
-    say(`qr-scanner imported`, `ok`);
-    say(`hasCamera: ${String(await QrScanner.hasCamera())}`);
+    const [{ createWorkerScanner }, { openCamera }] = await Promise.all([
+      import(`@saeris/hanko/scan`),
+      import(`../lib/camera`)
+    ]);
+    say(`decoder imported`, `ok`);
 
-    // Which engine it actually chose. On iOS there is no BarcodeDetector, so
-    // this must be a Worker or nothing will ever decode.
-    try {
-      const engine = await QrScanner.createQrEngine();
-      say(`engine: ${engine.constructor.name}`, `ok`);
-    } catch (error) {
-      say(`createQrEngine FAILED: ${String(error)}`, `bad`);
-    }
+    const camera = await openCamera(video);
+    const { width, height } = camera.settings;
+    say(`camera ${width ?? `?`}x${height ?? `?`}`, `ok`);
 
-    let decodeErrors = 0;
-    const scanner = new QrScanner(
-      video,
-      (result) => say(`DECODED: ${result.data}`, `ok`),
-      {
-        returnDetailedScanResult: true,
-        preferredCamera: `environment`,
-        highlightScanRegion: true,
-        maxScansPerSecond: 5,
-        // Proof the scan loop is running at all. "No QR code found" every
-        // frame is HEALTHY — it means frames are reaching the decoder.
-        onDecodeError: (error) => {
-          decodeErrors++;
-          const text = String(error);
-          if (decodeErrors === 1 || decodeErrors % 25 === 0) {
-            say(`decode attempt ${decodeErrors}: ${text}`);
-          }
-        }
-      }
+    // A module worker rather than a blob URL. The previous scanner built its
+    // engine from `blob:`, which iOS Safari can refuse with a SecurityError
+    // that presents exactly like an empty viewfinder — the probe above exists
+    // because of that. A bundled module worker has no such failure mode.
+    const worker = new Worker(
+      new URL(`../workers/decoder.ts`, import.meta.url),
+      { type: `module` }
     );
+    const scanner = createWorkerScanner(worker);
+    say(`worker scanner constructed`, `ok`);
 
-    await scanner.start();
-    say(`scanner.start() resolved`, `ok`);
-    say(`video ${video.videoWidth}x${video.videoHeight}, paused=${String(video.paused)}`);
+    let attempts = 0;
+    let dropped = 0;
+    let slowest = 0;
 
+    const pump = async (): Promise<void> => {
+      for (;;) {
+        const frame = camera.grab();
+
+        if (frame === null) {
+          // No painted frame yet. On iOS a paused element yields nothing, so
+          // this is worth distinguishing from "decoding and failing".
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          continue;
+        }
+
+        const started = performance.now();
+        const symbol = await scanner.scan(frame);
+        const elapsed = performance.now() - started;
+
+        // A frame offered while a decode is in flight is dropped and returns
+        // instantly; counting those separately keeps the rate honest.
+        if (elapsed <= 1) {
+          dropped++;
+        } else {
+          attempts++;
+          if (elapsed > slowest) slowest = elapsed;
+        }
+
+        if (symbol !== null) {
+          say(`DECODED: ${symbol.value}`, `ok`);
+          scanner.close();
+          camera.stop();
+          return;
+        }
+
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    };
+
+    void pump();
+
+    // Proof the loop is running at all. Attempts with no decode is the
+    // HEALTHY state when nothing is in view; zero attempts is the fault.
     setTimeout(() => {
       say(
-        decodeErrors === 0
-          ? `NO decode attempts after 3s — the scan loop is not running`
-          : `${decodeErrors} decode attempts in 3s — loop is alive`,
-        decodeErrors === 0 ? `bad` : `ok`
+        attempts === 0
+          ? `NO decode attempts after 3s — the pump is not running`
+          : `${attempts} attempts in 3s (${dropped} dropped, slowest ${slowest.toFixed(0)}ms) — loop is alive`,
+        attempts === 0 ? `bad` : `ok`
       );
     }, 3000);
   } catch (error) {

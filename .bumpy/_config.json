@@ -6,6 +6,15 @@
   "packages": {
     "@saeris/hanko": {
       "buildCommand": "vp pack"
+    },
+    "@saeris/hanko-example-astro": {
+      "skipNpmPublish": true,
+      "publishCommand": "yarn workspace @saeris/hanko-example-astro run deploy"
     }
-  }
+  },
+  "privatePackages": {
+    "version": true,
+    "tag": false
+  },
+  "allowCustomCommands": true
 }

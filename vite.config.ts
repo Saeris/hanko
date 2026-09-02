@@ -7,9 +7,11 @@ export default defineConfig({
     ...lint,
     ignorePatterns: [
       ...(lint.ignorePatterns ?? []),
-      // Astro regenerates these on every `dev` and `build`. Linting generated
-      // output reports problems nobody can fix in the source.
+      // Astro regenerates these on every `dev` and `build`, and the Vercel
+      // adapter writes `.vercel/output`. Linting generated output reports
+      // problems nobody can fix in the source.
       "**/.astro/**",
+      "**/.vercel/**",
       "**/dist/**"
     ]
   },
@@ -18,6 +20,7 @@ export default defineConfig({
     ignorePatterns: [
       ...(fmt.ignorePatterns ?? []),
       "**/.astro/**",
+      "**/.vercel/**",
       "**/dist/**"
     ]
   },

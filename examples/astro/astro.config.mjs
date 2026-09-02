@@ -1,12 +1,16 @@
 // @ts-check
 import { defineConfig } from "astro/config";
 import node from "@astrojs/node";
+import vercel from "@astrojs/vercel";
 
 export default defineConfig({
   // Server-rendered: every endpoint here touches grant state, and a
   // statically-built page cannot poll or approve anything.
   output: "server",
-  adapter: node({ mode: "standalone" }),
+  // Vercel in CI, Node locally. The adapters differ in how they serve — one
+  // builds a serverless function, the other a standalone server — and the
+  // local one is what `portless` proxies to for phone testing over TLS.
+  adapter: process.env.VERCEL ? vercel() : node({ mode: "standalone" }),
   server: {
     // Bind all interfaces so the phone can reach the dev server. Portless
     // proxies to this and terminates TLS in front of it — the camera on the

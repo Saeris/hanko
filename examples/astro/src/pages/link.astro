@@ -128,20 +128,14 @@ const subject = authenticate(Astro.request);
     const show = (el: HTMLElement, on: boolean) =>
       el.classList.toggle(`hidden`, !on);
 
-    // Typed loosely because the module is imported dynamically below — the
-    // library manages the camera, so there is no MediaStream to hold here.
-    let qrScanner: { stop: () => void; destroy: () => void } | null = null;
+    // Set once the camera is running; tears down the stream, the worker and
+    // the pump together. Leaving the stream live drains the battery and keeps
+    // the recording indicator on, which reads as the page spying.
+    let stopScanning: (() => void) | null = null;
 
-    /**
-     * Release the camera.
-     *
-     * `destroy` rather than `stop`: it also tears down the worker. Leaving the
-     * stream live drains the battery and keeps the recording indicator on,
-     * which reads as the page spying.
-     */
     const stopCamera = (): void => {
-      qrScanner?.destroy();
-      qrScanner = null;
+      stopScanning?.();
+      stopScanning = null;
     };
 
     const showCodeEntry = (): void => {
@@ -278,115 +272,86 @@ const subject = authenticate(Astro.request);
     /**
      * Open the camera and start decoding.
      *
-     * `qr-scanner` owns the camera, the decode loop, and the worker. It uses
-     * the native `BarcodeDetector` where one exists and falls back to its own
-     * worker otherwise — which matters because that API is a WICG incubation
-     * no major browser has committed to, and Safari has never shipped it.
+     * The decoder is this library's own — pixels in, string out, no camera and
+     * no DOM — so acquiring frames is the application's job. `openCamera` does
+     * that and `createWorkerScanner` runs the decode elsewhere.
      *
-     * Imported dynamically so the worker only loads on a page that actually
-     * opens a camera. The device screen never pays for it.
+     * The worker is not optional. The retry ladder overruns its own time
+     * budget by design, since that budget is checked between rungs rather than
+     * inside them, so a synchronous decode would stall the preview on exactly
+     * the frames someone is lining up.
+     *
+     * Imported dynamically so only a page that opens a camera pays for the
+     * decoder. The device screen never does.
+     *
+     * On polarity: this device screen renders light modules on a dark panel,
+     * which the third-party scanner used before silently could not read — its
+     * live camera path defaulted to dark-on-light and only its static helper
+     * tried both, so the camera ran, the worker span, and nothing ever
+     * decoded. Our decoder attempts both polarities by default, so that
+     * failure is gone rather than worked around.
      */
     const startCamera = async (): Promise<void> => {
-      const { default: QrScanner } = await import(`qr-scanner`);
+      const [{ createWorkerScanner }, { openCamera }] = await Promise.all([
+        import(`@saeris/hanko/scan`),
+        import(`../lib/camera`)
+      ]);
 
-      const scannerInstance = new QrScanner(
-        video,
-        (result: { data: string }) => {
-          const link = parseApprovalLink(result.data);
-          // A camera pointed at a room sees unrelated codes constantly. Each
-          // miss is a non-event, not an error.
-          if (!link) return;
-          // Stop before submitting: a second frame decoding the same code
-          // would fire submitCode twice and race the state machine.
-          scannerInstance.stop();
-          void client.submitCode(link.userCode);
-        },
-        {
-          // Without this the callback receives a bare STRING, not an object,
-          // so `result.data` is undefined and every scan is silently discarded
-          // as "not a code". The library runs fine; it just never matches.
-          returnDetailedScanResult: true,
-          // The rear camera — the front one points at the user, not at the
-          // screen they are trying to scan.
-          preferredCamera: `environment`,
-          // Draws the detected outline over the preview, so a partial read
-          // looks like progress rather than nothing happening.
-          highlightScanRegion: true,
-          highlightCodeOutline: true,
-          maxScansPerSecond: 10,
-          /**
-           * Surface the failures this library otherwise swallows.
-           *
-           * `onDecodeError` fires on EVERY frame without a code — that is
-           * normal and must stay quiet. But real faults arrive through the
-           * same channel, and without this they are discarded: nimiq/qr-scanner
-           * #230 reports a worker `SecurityError` on iOS Safari that presents
-           * exactly like an empty viewfinder, because the decode engine is
-           * built from a `blob:` URL that iOS can refuse (#221, still open).
-           *
-           * Distinguished by content rather than by count: "No QR code found"
-           * is the healthy case, anything else is a fault worth showing,
-           * because a user staring at a live preview that never resolves has
-           * no other signal that something is wrong.
-           */
-          onDecodeError: (error: Error | string): void => {
-            const text = typeof error === `string` ? error : error.message;
-            if (text === QrScanner.NO_QR_CODE_FOUND) return;
-
-            scanStatus.textContent = `Scanner failed: ${text}. Enter the code instead.`;
-            showCodeEntry();
-          }
-        }
-      );
-
-      qrScanner = scannerInstance;
-
-      /**
-       * Try both polarities, not just dark-on-light.
-       *
-       * The live camera path defaults to `dontInvert` — only the static
-       * `scanImage` helper sets `both`. Our own device screen renders light
-       * modules on a dark panel (Plex's look), so the default silently never
-       * matches: camera running, worker alive, decode loop spinning, no result
-       * ever. iOS's built-in camera reads the same code fine, which is what
-       * makes this look like a broken scanner rather than a wrong setting.
-       *
-       * Verified with the engine qr-scanner wraps: the /tv QR fails under
-       * `dontInvert` and decodes under `attemptBoth`.
-       *
-       * The cost is one extra binarization pass per frame, which is worth it
-       * for a scanner that has to read whatever a host renders.
-       */
-      scannerInstance.setInversionMode(`both`);
-
+      let camera;
       try {
-        await scannerInstance.start();
-
-        // `start()` resolving only means the stream was ATTACHED. iOS Safari
-        // will not begin playback of a srcObject stream on its own, and on
-        // Safari a paused element yields no frames — permission granted,
-        // preview black, nothing ever decodes.
-        //
-        // Deliberately no `videoWidth === 0` guard afterwards: qr-scanner
-        // samples the MediaStreamTrack rather than the element, so Chromium
-        // decodes fine from a paused, zero-size video. Treating that as
-        // failure would break a scanner that works.
-        if (video.paused) {
-          try {
-            await video.play();
-          } catch {
-            // Autoplay refused. The track may still be readable, so let the
-            // scanner try rather than dead-ending on a preview problem.
-          }
-        }
-
-        scanStatus.textContent = `Looking for a code…`;
+        camera = await openCamera(video);
       } catch {
         // Denied, unavailable, or an insecure context — getUserMedia needs
         // HTTPS. Typing always works, so fall through rather than dead-end.
         scanStatus.textContent = `No camera access. Enter the code instead.`;
         showCodeEntry();
+        return;
       }
+
+      const worker = new Worker(
+        new URL(`../workers/decoder.ts`, import.meta.url),
+        { type: `module` }
+      );
+      const scanner = createWorkerScanner(worker);
+
+      let stopped = false;
+      stopScanning = (): void => {
+        stopped = true;
+        scanner.close();
+        camera.stop();
+      };
+
+      scanStatus.textContent = `Looking for a code…`;
+
+      const pump = async (): Promise<void> => {
+        while (!stopped) {
+          const frame = camera.grab();
+
+          if (frame !== null) {
+            const symbol = await scanner.scan(frame);
+
+            if (symbol !== null) {
+              const link = parseApprovalLink(symbol.value);
+
+              // A camera pointed at a room sees unrelated codes constantly.
+              // Each miss is a non-event, not an error.
+              if (link) {
+                // Stop before submitting: a second frame decoding the same
+                // code would fire submitCode twice and race the state machine.
+                stopCamera();
+                void client.submitCode(link.userCode);
+                return;
+              }
+            }
+          }
+
+          // Yield to the compositor, which the decode does not since it runs
+          // on another thread.
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+      };
+
+      void pump();
     };
 
     // Arrived with the code already in the URL — a scanned QR or a universal
