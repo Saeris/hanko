@@ -522,6 +522,54 @@ runtime rises 105s -> 156s; the 120ms budgeted rate is unchanged at 54.6%,
 because the budget clips every one of these rungs on a live frame. Only a
 still pays for them.
 
+### The time budget does not bound the time
+
+`timeBudgetMs` is checked between ladder rungs, so it bounds how much work is
+STARTED and not how long a decode runs. Measured on 1280x720 frames at a 120ms
+budget:
+
+| | median | p90 | max | over budget |
+| --- | ------ | --- | --- | ----------- |
+| | 190ms  | 562ms | 1526ms | 40 of 71 |
+
+One `attempt` is four binarization passes across two polarities, each a full
+binarize, scan and sample, and the ladder calls `attempt` a dozen times. None
+of that is interruptible.
+
+**Enforcing it properly was measured and rejected.** Checking the deadline
+inside the pass loop halves the p90 (562ms -> 256ms) and cuts the median by
+30%, but costs **6 points** of budgeted coverage — 54.3% to 48.3% — because it
+aborts work mid-flight that would have succeeded slightly late. More budget
+does not buy it back: enforced at 250ms it reaches 51.3%, still below the
+unenforced 120ms figure. The max also stays at 1237ms, so the worst case is
+not actually bounded by it.
+
+So the overshoot stands as a known defect rather than a fixed one, and the
+budgeted rates in this document are what a decoder achieves while overrunning
+its budget by about 58% at the median. A caller who needs a hard bound should
+run the decoder in a worker, where `createWorkerScanner` already keeps the
+main thread free regardless of how long a frame takes.
+
+This also corrects an earlier conclusion here. Reordering rungs and runtime
+planning were both explained as "the budget is spent in the first few rungs,
+so later rungs never run". That was wrong: the budget is not spent, it is
+exceeded, and the later rungs do run. Both remain no-ops, but not for the
+reason given.
+
+### Profiling under viewfinder load
+
+`bench/video.mjs` profiles the case a scanner is actually in — a symbol
+present, a budget enforced, frame after frame with a pixel of jitter between
+them — as distinct from the still (`bench/decode.mjs`) and empty
+(`bench/noise.mjs`) cases.
+
+It surfaces a hot spot the others hide. `findFinderBlobs` is the **single
+hottest function at 22% of JS time** under this load, where it does not reach
+the top three for either of the others. It is worth 2 corpus images and 12% of
+frame time. Gating it on the deadline was tried and collapsed the budgeted
+rate to 48.3%, for the same reason as above: by the time the check runs, the
+budget is usually already exceeded.
+
 ### Runtime planning, measured and rejected
 
 The ladder is a fixed sequence run blindly, and several rungs answer conditions
@@ -536,7 +584,7 @@ So a plan was built: measure once, skip the scaling rungs the measurement rules
 out, cache it across frames in the progressive scanner since a scene does not
 change between them, and invalidate on `reset()`.
 
-It buys **nothing**. On stills it is 3% *slower*, because skipping a rung saves
+It buys **nothing**. On stills it is 3% _slower_, because skipping a rung saves
 only that rung while the measurement is paid on every frame. Under video-shaped
 load — 116 scenes, 15 frames each, 120ms budget, measurement amortised — it
 reads the same 55 scenes in the same time to within 0%.
