@@ -71,8 +71,17 @@ describe(`decoder cost`, () => {
     //
     // This frame cost 3.8 seconds before the dedup scan was bounded, the
     // refine coefficients moved off dictionary-mode property access, and the
-    // deep search learned to skip implausible candidate counts. The budget is
-    // generous against the ~2.6s that measured afterwards, because CI machines
+    // deep search learned to skip implausible candidate counts, which took it
+    // to 2.5s. Composing transform pairs — worth 1.1 points of coverage — put
+    // it back to 4.9s, because grain is precisely the case with no early exit
+    // and composition multiplies the rungs that run on it.
+    //
+    // Gating those rungs on candidate count was measured and rejected: it
+    // recovered about a third of the time and cost a corpus image. The cost is
+    // accepted rather than hidden, and it is a STILL-image cost — the same
+    // frame under the 120ms budget a viewfinder runs at takes 175ms.
+    //
+    // The budget is generous against the ~4.9s measured, because CI machines
     // vary — it guards the collapse, not the constant.
     const width = 1280;
     const height = 720;
@@ -86,6 +95,6 @@ describe(`decoder cost`, () => {
     const started = Date.now();
     createQrDecoder({ timeBudgetMs: 0 }).decode({ data, width, height });
 
-    expect(Date.now() - started).toBeLessThan(3200);
+    expect(Date.now() - started).toBeLessThan(6500);
   });
 });

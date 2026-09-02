@@ -501,7 +501,7 @@ turned out to be worth coverage, and neither is about speed at all.
 
 **A lossy step should run as late as possible.** Thresholding is the most
 destructive operation in the pipeline — eight bits to one — and morphological
-closing was running *after* it. On a binarized matrix a speckle can only take
+closing was running _after_ it. On a binarized matrix a speckle can only take
 its neighbours' bit; on the greyscale image it is filled with their
 intensities. Moving the operation to the other side of the threshold recovers
 `glare` +5 with `damaged`, `monitor` and `bright_spots` each gaining. A
@@ -512,7 +512,7 @@ hard-clipped after thresholding.
 Every rung applied exactly one transform to the original image, so a frame with
 two independent faults — small in frame AND moire — had no rung addressing
 both. Composing pairs recovers images no single transform does, and the order
-*within* a pair is not arbitrary: downscale-then-blur recovers 5 where
+_within_ a pair is not arbitrary: downscale-then-blur recovers 5 where
 blur-then-downscale recovers 3, because a box-average reduction already
 smooths and blurring first over-softens what the reduction would have handled.
 
@@ -521,6 +521,33 @@ Together: **73.3% -> 74.4%**, with `monitor` 72.0% -> 80.0%, `bright_spots`
 runtime rises 105s -> 156s; the 120ms budgeted rate is unchanged at 54.6%,
 because the budget clips every one of these rungs on a live frame. Only a
 still pays for them.
+
+### Runtime planning, measured and rejected
+
+The ladder is a fixed sequence run blindly, and several rungs answer conditions
+that are cheap to measure. The finder scan already reports a module size per
+candidate, and that one number separates the categories whose fix is scaling
+from those whose is not — median pixels per module: `monitor` 1.7, `close` 3.3,
+`nominal` 6.5, `high_version` 8.5, `blurred` 9.5, `damaged` 18.7. `monitor`
+sits below the 3-3.5 the sampling literature gives as the practical floor,
+which is exactly why enlarging rescues it.
+
+So a plan was built: measure once, skip the scaling rungs the measurement rules
+out, cache it across frames in the progressive scanner since a scene does not
+change between them, and invalidate on `reset()`.
+
+It buys **nothing**. On stills it is 3% *slower*, because skipping a rung saves
+only that rung while the measurement is paid on every frame. Under video-shaped
+load — 116 scenes, 15 frames each, 120ms budget, measurement amortised — it
+reads the same 55 scenes in the same time to within 0%.
+
+The reason is the same one that made reordering the rungs a no-op: at 120ms the
+budget is spent in the first few rungs, so ruling out rungs 6 through 10 saves
+time that was never going to be spent. A plan can only pay where the ladder
+runs deep, and the ladder only runs deep when there is no budget to save.
+
+Reverted. Recorded because the heuristic is sound and the measurement is the
+argument against it, not the idea.
 
 ### Narrow before you enlarge
 
