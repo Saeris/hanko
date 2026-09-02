@@ -1,6 +1,17 @@
 # Changelog
 
 
+
+## 0.3.0
+<sub>2026-09-02</sub>
+
+- Read UPC and EAN barcodes.
+- Read UPC-E, the compressed six-digit form found on bottle necks and small
+  cans. Opt in via `formats` — see the README for why it is not on by default.
+-  *(patch)* - Name what a GTIN prefix is allocated for.
+-  *(patch)* - Benchmark the linear decoder, and sample more rows.
+-  *(patch)* - Tune the linear decoder against the corpus.
+
 ## 0.2.1
 <sub>2026-09-02</sub>
 
