@@ -7,6 +7,8 @@
  * worst case on data holding no symbol at all. Measured before this bench
  * existed, one such frame cost 3.8 seconds with no time budget.
  */
+// oxlint-disable no-bitwise -- a linear congruential generator IS bitwise
+// arithmetic; the mask and shift are the algorithm, not a micro-optimisation.
 import { createQrDecoder } from "../dist/scan/index.mjs";
 
 const decoder = createQrDecoder({ timeBudgetMs: 0 });

@@ -25,5 +25,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: true
 
+      # Built before checking, not after.
+      #
+      # The example consumes the library through its published entry points —
+      # `link:../..` plus the `exports` map — and those resolve types to
+      # `dist/*.d.mts`. On a clean checkout there is no dist, so every
+      # `@saeris/hanko` import in the example fails to typecheck and `vp check`
+      # reports two dozen errors that do not exist locally, where a dist is
+      # lying around from the last build.
+      - run: vp pack
+
       - run: vp check
       - run: vp test

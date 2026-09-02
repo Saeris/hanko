@@ -14,6 +14,10 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
+// oxlint-disable no-bitwise -- luma weights and the jitter index are bitwise
+// arithmetic by nature.
+// oxlint-disable no-await-in-loop -- fixtures load sequentially on purpose:
+// parallel reads would contend for disk and skew the warm-up this measures.
 import { createQrDecoder, toGray } from "../dist/scan/index.mjs";
 
 const ROOT = "C:/GitHub/@saeris/hanko/.corpus/qrcodes/detection";
