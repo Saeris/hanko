@@ -310,6 +310,11 @@ yarn corpus:barcodes  # fetch the corpus (~226 MB, CC BY 3.0)
 yarn bench:barcodes   # run it
 ```
 
+What this family covers, the formats it does **not** yet read, and the one
+known misread live in [plan/linear-coverage.md](plan/linear-coverage.md). The
+method behind these numbers — and the negative results that shaped them — is
+in [plan/method.md](plan/method.md).
+
 ### UPC-E has to be asked for
 
 A UPC-E is the compressed form — six digits where a full UPC-A will not fit,
